@@ -1,6 +1,7 @@
 extends SceneTree
 ## Windowed run that saves a PNG of the real UI:
-##   Godot --path <project> --script res://scripts/screenshot.gd -- <zone> <out.png>
+##   Godot --path <project> --script res://scripts/screenshot.gd -- <zone> <out.png> [enhance]
+## With `enhance`: also picks Cazic-Thule, chooses 16x polygons + 1024 textures and runs the enhanced preview.
 ## Not headless: needs a display. Used to eyeball the MVP flow.
 
 func _initialize() -> void:
@@ -36,6 +37,27 @@ func _run() -> void:
 	while t < 120.0 and not backend._pending.is_empty():  # background revalidation / conversions
 		await create_timer(0.5).timeout
 		t += 0.5
+	if args.size() > 2 and args[2] == "enhance":
+		m.model_filter.text = "cth"
+		m._fill_models()
+		for i in m.model_list.item_count:
+			if str((m.model_list.get_item_metadata(i) as Dictionary).tag) == "cth":
+				m.model_list.select(i)
+				m._on_model_selected(i)
+				break
+		var p = m.enhance_panel
+		p._passes.select(2)
+		p._tex.select(2)
+		p._on_options_changed()
+		t = 0.0
+		while t < 60.0 and str(p._estimate.text).begins_with("working out"):
+			await create_timer(0.5).timeout
+			t += 0.5
+		p._on_preview()
+		t = 0.0
+		while t < 240.0 and p.is_busy():
+			await create_timer(0.5).timeout
+			t += 0.5
 	await create_timer(0.5).timeout
 	for i in 20:  # let animations advance and the cameras settle
 		await process_frame

@@ -1,7 +1,7 @@
 # Tweeq — engine + CLI
 
-v1 of the Mob Model Manager is a **model-swapping** app (Enhance is deferred; see
-../PLAN_tweeq.md). This directory is the headless engine that the Godot UI will drive.
+Tweeq swaps which model an EverQuest race uses and can **enhance** EQG models (more polygons, bigger textures).
+This directory is the headless engine and JSON CLI that the Godot UI drives (plan: ../PLAN_tweeq.md).
 
 ## How a swap works (proven in-game 2026-10-01)
 1. `racedata.txt`: set field 50 (model tag) of the race/gender row; optionally fields 46/47 (native height).
@@ -20,9 +20,31 @@ files**, so `apply` after an official patch re-creates every swap. Originals are
 - `tests/` — `python3 -W error::ResourceWarning -m unittest discover -s tests -t .`
   (includes an integration test that rebuilds the live PoTime Cazic edit byte-for-byte from the vanilla backups)
 
+## Enhance (EQG models)
+`tweeq/enhance.py`: `build_enhanced(vanilla archive bytes, Params)` = `quail unzip` -> midpoint-subdivide every `.mds`
+(`tools/mds_subdivide.py`, refuses > 65,535 vertices per model) -> upscale textures (`tools/enhance_textures.py`) ->
+`quail zip` -> re-read and verify. It is a second decision type (`kind: enhance`) in the same manifest: the vanilla
+archive is vaulted on first touch, built archives are cached in `<vault>/enhanced/` (key = sha of the original +
+settings), `apply` builds anything missing BEFORE writing a single file (a failed or cancelled build leaves the
+install untouched), and a game patch that replaces the archive reads as `drifted` like any other file.
+- Params: `passes` 0/1/2 (x4 faces per pass), `tex_size` 0/512/1024, `engine` auto|esrgan|lanczos.
+  Textures already at/above the target, under 64 px, or in an unreadable format are left alone; a request that
+  would change nothing is refused. DDS layout is kept (RGBA32 stays RGBA32, DXT is re-encoded, mips only if the source had them).
+- Textures: the built-in Lanczos resize always works. Real-ESRGAN (`realesrgan-ncnn-vulkan`) is optional and is NEVER
+  shipped in this repo (its weights were trained on academic-only data sets): `upscaler-install` downloads the official
+  release into `%APPDATA%\Tweeq\tools\realesrgan` after a sha256 check and a GPU self-test; `upscaler-remove` deletes it.
+- Only EQG (`eqg_mds`) models. Classic WLD models are refused with a clear message.
+- CLI: `enhance-plan TAG --passes N --tex-size S` (read-only estimate), `enhance-preview TAG ... --out DIR`
+  (builds in a temp folder and returns a .glb; never touches the install), `enhance TAG ... [--take-over]` (records
+  the decision; `apply` builds and writes it), `upscaler-status|install [--from-zip PATH]|remove`.
+  Long commands take `--progress-file F` (`{stage,pct}` JSON to poll) and `--cancel-file F` (create it to stop cleanly).
+- `--take-over`: the live archive differs from the vanilla backup (`--vanilla`), e.g. a hand-made enhanced build.
+  Tweeq then rebuilds from the backup copy instead of enhancing the already-modified file.
+
 ## Status values
-`clean` / `applied` / `needs-apply` (patch restored vanilla, or decisions changed) / `drifted`
-(file changed by something else; `apply --accept-drift` adopts it as the new original) / `missing`.
+`clean` / `applied` / `needs-apply` (patch restored vanilla, or decisions changed) / `needs-build` (an enhanced
+archive is wanted but not built yet; `apply` builds it) / `drifted` (file changed by something else;
+`apply --accept-drift` adopts it as the new original) / `missing`.
 
 ## Run it (MVP)
 `./run_app.sh` opens the window. Pick a zone on the left (type to filter, e.g. `gfaydark`), then one of its NPC
@@ -33,8 +55,9 @@ Previews are generated on first view (WLD ~0.5-7 s, EQG ~2 s, on a background th
 sandbox, so Apply/Restore never touch your real EverQuest folder.
 
 ## Godot UI shell (app/ui, Godot 4.7.2)
-Races (filter by id / tag / NPC) -> pick a replacement model -> pick zones (PEQ spawn zones pre-selected
-when a PEQ import exists) -> Add swap -> Apply all / Restore all. Two isolated 3D panes (A current /
+Zone or race -> the model to replace (pane A) -> any installed model as the replacement (pane B) -> Swap A -> B
+(applied at once). The "Enhance model B" box on the right (`scripts/enhance_panel.gd`) shows the plan, previews
+the enhanced model in pane B, and enhances. Two isolated 3D panes (A current /
 B candidate) load any .glb at runtime (`scripts/viewer_pane.gd`); previews come from `ui/previews/<tag>.glb`
 (generated on demand by `tweeq/preview.py` -> tools/mds_to_gltf.py / wce_chr_to_gltf.py). `scripts/backend.gd` is the only bridge: one
 process per call, one JSON object back. Dev launcher = `wsl.exe -d Ubuntu ... python3 -m tweeq.cli`
@@ -43,7 +66,8 @@ process per call, one JSON object back. Dev launcher = `wsl.exe -d Ubuntu ... py
 - `python3 make_sandbox.py` builds `app/sandbox/EverQuest` from VANILLA files; the UI defaults to it.
   Do NOT point the app at an install carrying hand-applied edits: the first apply vaults whatever is live as the "original".
 - `ui/sync_and_test.sh` syncs to C:\Users\brian\tweeq_ui and runs the headless smoke test
-  (`scripts/smoke_test.gd`, 21 checks: drives the real Main scene through the real engine + sandbox).
+  (`scripts/smoke_test.gd`, 98 checks: drives the real Main scene through the real engine + sandbox, including the
+  whole Enhance flow: plan, preview, enhance, disable, enable, remove).
 
 ## Compatibility checks (`tweeq/compat.py`, CLI `check RACE TAG [--zones a,b]`)
 Offline, read-only findings (error / warn / info) before a swap, from `data/model_compat.json`
@@ -60,6 +84,7 @@ builds/cth_weapfix/ — fold those survey scripts into tweeq before shipping.
 
 ## Not built yet
 - Settings dialog (paths are in %APPDATA%\Tweeq\config.json), `.mod`-format character previews (135 models), static WLD previews, async for the non-preview calls, an equipment/texture-variant view
+- WLD (classic model) Enhance: needs per-family verification (tools/caz_upgrade.py + wld_mesh_splice.py are the dev starting point)
 - Fix tooling for flagged models (neutralise bad tracks / relink the weapon bone: builds/cth_weapfix, untested in-game)
 - Retag + GlobalLoad.txt fallback (needed only when a tag can't be changed; tools/eqg_model_swap.py)
 - Texture-variant choice, size helper, per-NPC (not per-race) targeting is impossible client-side

@@ -232,5 +232,89 @@ func _run() -> void:
 	m._update_add_state()
 	check(m.check_worst == "error" and m.add_btn.disabled, "same-model swap raises an error and disables Add swap")
 
+	await _enhance_checks(m, backend)
+
 	print("DONE failures=%d" % failures)
 	quit(1 if failures > 0 else 0)
+
+
+func _wait_idle(panel, limit_s: float) -> bool:
+	var t := 0.0
+	while panel.is_busy() and t < limit_s:
+		await create_timer(0.5).timeout
+		t += 0.5
+	return not panel.is_busy()
+
+
+func _wait_plan(panel, limit_s: float) -> void:
+	var t := 0.0
+	while str(panel._estimate.text).begins_with("working out") and t < limit_s:
+		await create_timer(0.5).timeout
+		t += 0.5
+
+
+func _state_of(backend: Node, path: String) -> String:
+	var st: Dictionary = backend.call_cli(["status"])
+	for f in st.data:
+		if str(f.path) == path:
+			return str(f.state)
+	return "absent"
+
+
+## Enhance panel, end to end against the sandbox (built-in resize engine: no AI upscaler is installed there).
+func _enhance_checks(m: Control, backend: Node) -> void:
+	var p = m.enhance_panel
+	check(p != null, "Enhance panel is part of the window")
+	var ci := _find_model(m.model_list, "orc")
+	m.model_filter.text = ""
+	m._fill_models()
+	ci = _find_model(m.model_list, "orc")
+	m.model_list.select(ci)
+	m._on_model_selected(ci)
+	check(p._go_btn.disabled and "classic model" in str(p._target.text), "a classic (WLD) model cannot be enhanced: %s" % str(p._target.text).left(60))
+	var cth := _find_model(m.model_list, "cth")
+	m.model_list.select(cth)
+	m._on_model_selected(cth)
+	check(not p._passes.disabled and "Cazic" in str(p._target.text), "an EQG model can: %s" % str(p._target.text))
+	check(p._go_btn.disabled, "nothing chosen yet: Enhance is off")
+	p._passes.select(1)
+	p._on_options_changed()
+	await _wait_plan(p, 30.0)
+	check("7,754" in str(p._estimate.text) and "12,540" in str(p._estimate.text), "plan shows the new counts: %s" % str(p._estimate.text).replace("\n", " | ").left(110))
+	check(not p._go_btn.disabled and not p._preview_btn.disabled, "Enhance and Preview are enabled once the plan is fine")
+	p._passes.select(0)
+	p._tex.select(1)  # 512: CTH's textures are already 512, so there is nothing to do
+	p._on_options_changed()
+	await _wait_plan(p, 30.0)
+	check(p._go_btn.disabled and "nothing to do" in str(p._estimate.text), "a choice that changes nothing is refused: %s" % str(p._estimate.text).left(70))
+	p._tex.select(0)
+	p._passes.select(1)
+	p._on_options_changed()
+	await _wait_plan(p, 30.0)
+
+	# preview: shows the enhanced model in B, touches nothing
+	p._on_preview()
+	check(await _wait_idle(p, 120.0), "preview finished")
+	check(m.pane_b.has_model() and m.pane_b_enhanced == "cth" and "enhanced preview" in str(m.pane_b.title), "pane B shows the enhanced preview")
+	check(_state_of(backend, "cth.eqg") == "absent", "previewing recorded nothing")
+
+	# enhance for real (in the sandbox)
+	p._on_enhance()
+	check(await _wait_idle(p, 180.0), "enhance finished")
+	m._refresh_swaps()
+	check(_state_of(backend, "cth.eqg") == "applied", "the enhanced archive is applied (status: %s)" % _state_of(backend, "cth.eqg"))
+	var row := -1
+	for i in m.swap_list.item_count:
+		if "enhance" in m.swap_list.get_item_text(i):
+			row = i
+	check(row >= 0 and "4x polygons" in m.swap_list.get_item_text(row), "Recorded swaps lists it: %s" % (m.swap_list.get_item_text(row) if row >= 0 else "-"))
+	# disable -> original back; enable -> back again (cached build, fast); remove -> original and gone
+	m.swap_list.select(row)
+	m._swap_action("disable")
+	check(_state_of(backend, "cth.eqg") == "clean", "Disable puts the original archive back")
+	m.swap_list.select(row)
+	m._swap_action("enable")
+	check(_state_of(backend, "cth.eqg") == "applied", "Enable applies the cached enhanced archive again")
+	m.swap_list.select(row)
+	m._swap_action("remove")
+	check(_state_of(backend, "cth.eqg") == "clean" and m.swap_list.item_count == 0, "Remove restores the original and clears the list")

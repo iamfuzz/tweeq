@@ -1,0 +1,5 @@
+{
+  "_comment": "Curated model names (tag -> display name). Applied after the automatic names; users can add their own in <vault>/model_names.json.",
+  "caz": "Cazic-Thule (classic)",
+  "cth": "Cazic-Thule (new)"
+}

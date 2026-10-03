@@ -11,8 +11,9 @@ mkdir -p "$DST"
 rsync -a --delete --exclude '.godot' --exclude 'sync_and_test.sh' ui/ "$DST/"
 # Compile-check the app's scripts first (~3 s): a script error would otherwise open a blank gray window.
 CONSOLE=/mnt/c/Users/brian/Downloads/Godot_v4.7.2-stable_win64.exe/Godot_v4.7.2-stable_win64_console.exe
+"$CONSOLE" --headless --path 'C:\Users\brian\tweeq_ui' --import >/dev/null 2>&1 || true   # refresh the global class cache
 ERR=""
-for s in main viewer_pane backend; do
+for s in main viewer_pane backend enhance_panel; do
 	# --check-only does not register autoloads, so "Identifier not found: Backend" is a false alarm; drop only that
 	OUT=$("$CONSOLE" --headless --path 'C:\Users\brian\tweeq_ui' --check-only --script res://scripts/$s.gd 2>&1 \
 		| awk '/SCRIPT ERROR/{keep = ($0 !~ /Identifier not found: Backend/)} keep && /SCRIPT ERROR|   at:/' || true)

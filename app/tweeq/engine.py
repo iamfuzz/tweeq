@@ -17,6 +17,7 @@ import uuid
 from dataclasses import dataclass
 
 from .models import ModelIndex
+from . import enhance as enh
 from .racedata import RaceData
 from .zonelist import ZoneList
 
@@ -42,6 +43,11 @@ def zone_file(zone: str) -> str:
     return f"{zone.lower()}_chr.txt"
 
 
+def is_text_file(rel: str) -> bool:
+    """racedata + zone lists are replayed as text edits; every other managed file is a model archive."""
+    return rel == RACEDATA or rel.endswith("_chr.txt")
+
+
 def _atomic_write(path: str, data: bytes) -> None:
     d = os.path.dirname(path)
     fd, tmp = tempfile.mkstemp(dir=d, prefix=".tweeq-")
@@ -58,7 +64,7 @@ def _atomic_write(path: str, data: bytes) -> None:
 @dataclass
 class FileReport:
     path: str
-    state: str          # clean | applied | needs-apply | drifted | missing
+    state: str          # clean | applied | needs-apply | needs-build | drifted | missing
     live_sha: str | None = None
 
 
@@ -76,10 +82,12 @@ def norm_dir(p: str) -> str:
 
 
 class Swapper:
-    def __init__(self, eq_dir: str, vault_dir: str, model_index: ModelIndex | None = None):
+    def __init__(self, eq_dir: str, vault_dir: str, model_index: ModelIndex | None = None,
+                 esrgan_dir: str | None = None):
         self.eq = eq_dir
         self.vault = vault_dir
         self.models = model_index
+        self.esrgan_dir = esrgan_dir             # configured upscaler folder (else discovered)
         os.makedirs(os.path.join(vault_dir, "originals"), exist_ok=True)
         self.manifest_path = os.path.join(vault_dir, "manifest.json")
         self.m = self._load()
@@ -138,6 +146,12 @@ class Swapper:
     def decisions(self) -> list[dict]:
         return list(self.m["decisions"])
 
+    def _swaps(self) -> list[dict]:
+        return [d for d in self.m["decisions"] if d.get("kind", "swap") == "swap"]
+
+    def _enhances(self) -> list[dict]:
+        return [d for d in self.m["decisions"] if d.get("kind") == "enhance"]
+
     def add_swap(self, race: int, model_tag: str, zones: list[str] | str,
                  genders: list[int] | None = None, height: str | None = None) -> dict:
         """`zones` is a list of zone names, or ALL_ZONES ("all") for every zone in the install."""
@@ -151,7 +165,7 @@ class Swapper:
         for g in gs:
             if not rd.has(race, g):
                 raise SwapError(f"race {race} has no gender-{g} row")
-        for d in self.m["decisions"]:
+        for d in self._swaps():
             if d["enabled"] and d["race"] == race and set(d["genders"]) & set(gs):
                 raise SwapError(f"race {race} is already swapped by decision {d['id'][:8]}")
         archive, fmt, notes = None, None, []
@@ -161,7 +175,7 @@ class Swapper:
         for z in zones:
             self._base(zone_file(z))  # must exist
         dec = {
-            "id": str(uuid.uuid4()), "enabled": True,
+            "id": str(uuid.uuid4()), "enabled": True, "kind": "swap",
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "race": race, "genders": gs, "model_tag": model_tag.upper(),
             "list_archive": archive, "format": fmt, "zones": [z.lower() for z in zones],
@@ -197,10 +211,11 @@ class Swapper:
 
     # ---------------------------------------------------------------- rendering
     def managed_files(self) -> list[str]:
+        """Text files replayed by swap decisions (racedata + zone lists)."""
         out = {RACEDATA}
-        for d in self.m["decisions"]:
+        for d in self._swaps():
             out.update(zone_file(z) for z in self.zones_of(d))
-        out.update(self.m["files"])
+        out.update(r for r in self.m["files"] if is_text_file(r))
         return sorted(out)
 
     def render(self, bases: dict[str, bytes] | None = None) -> dict[str, bytes]:
@@ -210,7 +225,7 @@ class Swapper:
         rd = RaceData(get(RACEDATA))
         zl: dict[str, ZoneList] = {}
         zl_changed: set[str] = set()
-        for d in self.m["decisions"]:
+        for d in self._swaps():
             if not d["enabled"]:
                 continue
             for g in d["genders"]:
@@ -231,14 +246,107 @@ class Swapper:
             out[rel] = zl[rel].tobytes() if rel in zl_changed else get(rel)
         return out
 
+    # ---------------------------------------------------------------- enhance (model archives)
+    def _esrgan(self) -> str | None:
+        return enh.find_esrgan(self.vault, self.esrgan_dir)
+
+    def enhance_files(self) -> list[str]:
+        """Model archives this vault manages: every enhanced container, plus ones applied before."""
+        out = {d["container"] for d in self._enhances()}
+        out.update(r for r in self.m["files"] if not is_text_file(r))
+        return sorted(out)
+
+    def _enh_target(self, rel: str) -> dict | None:
+        return next((d for d in self._enhances() if d["enabled"] and d["container"] == rel), None)
+
+    def _enh_artifact(self, base: bytes, d: dict) -> tuple[str, enh.Params]:
+        params = enh.Params.from_dict(d["params"]).resolved(self._esrgan())
+        key = enh.params_hash(sha(base), params)
+        return os.path.join(self.vault, "enhanced", key + ".eqg"), params
+
+    def add_enhance(self, tag: str, params: "enh.Params", vanilla_dir: str | None = None,
+                    take_over: bool = False) -> dict:
+        """Record that `tag`'s archive should be enhanced (more polygons and/or bigger textures)."""
+        params.validate()
+        if self.models is None:
+            raise SwapError("no model index loaded")
+        try:
+            ref = self.models.resolve(tag)
+        except KeyError as e:
+            raise SwapError(str(e.args[0]))
+        if ref.format != "eqg_mds":
+            raise SwapError(f"{tag.upper()} is a classic {ref.format.split('_')[0].upper()} model; "
+                            "Enhance supports EQG (Luclin and later) models for now")
+        rel = ref.container
+        for d in self._enhances():
+            if d["enabled"] and d["container"] == rel:
+                raise SwapError(f"{rel} is already enhanced by decision {d['id'][:8]}; remove it first")
+        notes: list[str] = []
+        if self._vaulted(rel) is None:
+            live = self._live(rel)
+            if live is None:
+                raise SwapError(f"{rel} not found in the EQ install")
+            v = _read(os.path.join(vanilla_dir, rel)) if vanilla_dir else None
+            if v is not None and sha(v) != sha(live):
+                if not take_over:
+                    raise SwapError(f"{rel} in your install is not the original file (something other than "
+                                    "Tweeq changed it). Enhancing would rebuild it from your backup copy of the "
+                                    "original; confirm to continue.")
+                self._vault_put(rel, v)
+                notes.append("replaced an existing modified file with an enhanced copy of the original")
+        dec = {"id": str(uuid.uuid4()), "enabled": True, "kind": "enhance",
+               "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+               "model_tag": tag.upper(), "container": rel, "params": params.to_dict(), "notes": notes}
+        self.m["decisions"].append(dec)
+        self._save()
+        return dec
+
+    def base_path(self, rel: str) -> str:
+        """Path of the ORIGINAL (un-enhanced) copy of a managed file: the vault copy, else the live file."""
+        v = os.path.join(self.vault, "originals", rel)
+        if os.path.exists(v):
+            return v
+        live = os.path.join(self.eq, rel)
+        if not os.path.exists(live):
+            raise SwapError(f"{rel} not found in the EQ install")
+        return live
+
+    def _container_status(self) -> list[FileReport]:
+        reps = []
+        for rel in self.enhance_files():
+            live = self._live(rel)
+            if live is None:
+                reps.append(FileReport(rel, "missing"))
+                continue
+            s = sha(live)
+            orig = self._vaulted(rel)
+            rec = self.m["files"].get(rel)
+            d = self._enh_target(rel)
+            built = True
+            if d:
+                path, _p = self._enh_artifact(orig if orig is not None else live, d)
+                want = _read(path)
+                built = want is not None
+            else:
+                want = orig if orig is not None else live
+            if built and s == sha(want):
+                state = "clean" if (orig is None or want == orig) else "applied"
+            elif rec is None or s in (rec["original_sha"], rec["applied_sha"]):
+                state = "needs-apply" if built else "needs-build"
+            else:
+                state = "drifted"
+            reps.append(FileReport(rel, state, s))
+        return reps
+
     # ---------------------------------------------------------------- status / apply
     def status(self) -> list[FileReport]:
         """Per-file state vs. what the enabled decisions require.
 
-        clean       live == original and no swap needs this file changed
-        applied     live == desired content (swaps active)
+        clean       live == original and no decision needs this file changed
+        applied     live == desired content (decisions active)
         needs-apply live differs from desired but is a state we recognise
                     (original after a patch/restore, or our previous apply)
+        needs-build an enhanced archive is wanted but has not been built yet (apply builds it)
         drifted     live is neither original, nor our last apply: changed by something
                     else (e.g. a patch) and needs review / accept_drift
         missing     file not in the install
@@ -262,22 +370,46 @@ class Swapper:
             else:
                 state = "drifted"
             reps.append(FileReport(rel, state, s))
-        return reps
+        return reps + self._container_status()
 
-    def apply(self, accept_drift: bool = False, dry_run: bool = False) -> list[FileReport]:
-        """Write every managed file so it matches the enabled decisions."""
+    def apply(self, accept_drift: bool = False, dry_run: bool = False,
+              progress=None, cancel=None) -> list[FileReport]:
+        """Write every managed file so it matches the enabled decisions.
+
+        Order matters: anything expensive (enhanced archives) is BUILT first, so a failed or cancelled
+        build leaves the install exactly as it was."""
         # 1. re-baseline drifted files (a patch changed them): live becomes the new original
         bases: dict[str, bytes] = {}
         for rep in self.status():
             if rep.state == "drifted":
                 if not accept_drift:
-                    raise SwapError(f"{rep.path} was changed outside tweeq (likely a patch); "
+                    raise SwapError(f"{rep.path} was changed outside Tweeq (likely a patch); "
                                     "re-run with accept_drift to adopt it as the new original")
                 bases[rep.path] = self._live(rep.path)
-        want = self.render(bases)
+        want = self.render({r: b for r, b in bases.items() if is_text_file(r)})
         if dry_run:
             return self.status()
-        # 2. vault originals on first touch (or adopt drifted live files)
+        # 2. build enhanced archives (cached by original-sha + settings)
+        esrgan = self._esrgan()
+        for rel in self.enhance_files():
+            base = bases.get(rel)
+            if base is None:
+                base = self._base(rel)
+            d = self._enh_target(rel)
+            if d is None:
+                want[rel] = base
+                continue
+            path, params = self._enh_artifact(base, d)
+            data = _read(path)
+            if data is None:
+                try:
+                    data, _rep = enh.build_enhanced(base, params, esrgan, progress=progress, cancel=cancel)
+                except enh.EnhanceError as e:
+                    raise SwapError(f"could not enhance {rel}: {e}")
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                _atomic_write(path, data)
+            want[rel] = data
+        # 3. vault originals on first touch (or adopt drifted live files)
         for rel in want:
             if rel in bases:
                 self._vault_put(rel, bases[rel])
@@ -286,7 +418,7 @@ class Swapper:
                 if live is None:
                     raise SwapError(f"{rel} not found in the EQ install")
                 self._vault_put(rel, live)
-        # 3. write
+        # 4. write
         for rel, data in want.items():
             orig = self._vaulted(rel)
             _atomic_write(os.path.join(self.eq, rel), data)

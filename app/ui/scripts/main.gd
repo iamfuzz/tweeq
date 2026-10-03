@@ -32,8 +32,14 @@ A patch or the launcher can put the original files back. When you open the app i
 [b]Other buttons[/b]
 Refresh reloads everything. Find EverQuest searches for your EverQuest folder; you can also type a folder in the box and press Enter. "Adopt existing edits" appears if your install already contains edits the app did not make; adopt them first so the app can restore the true originals. Until then the Swap button is switched off.
 
+[b]Enhance (more polygons, sharper textures)[/b]
+Click a model in the list, then use the [b]Enhance model B[/b] box on the right. [b]Polygons[/b] splits every triangle of the model, so curves look smoother (1 pass = 4x the triangles, 2 passes = 16x). [b]Textures[/b] makes the model's pictures larger (512 or 1024 pixels). The box tells you what the result will be before you start. [b]Preview in B[/b] builds the enhanced model and shows it in pane B so you can compare it with the original; nothing in your game changes. [b]Enhance[/b] builds it and puts it in your EverQuest folder, and it appears in the Recorded swaps list as [b]enhance[/b]; Disable or Remove it there to get the original model file back.
+Only EQG models (Luclin and later, such as Cazic-Thule) can be enhanced for now; classic models cannot. Enhancing changes the model's file, so it applies to every NPC that uses that model.
+[b]AI upscaler.[/b] For the sharpest textures Tweeq can use the free Real-ESRGAN upscaler. It is optional: press [b]Get AI upscaler[/b] to download it (about 45 MB, checked before it is installed). Without it Tweeq uses a built-in resize, which is faster but less detailed. The upscaler needs a Vulkan-capable graphics card. [b]Remove AI upscaler[/b] deletes it again.
+After a game patch replaces an enhanced model's file, the app notices; use the red message's button to rebuild it on top of the new file.
+
 [b]Limits[/b]
-The app swaps which model a race uses. It does not change meshes or textures inside a model file.
+Without Enhance, the app only changes which model a race uses; it does not change meshes or textures inside a model file.
 """
 
 var races: Array = []
@@ -76,6 +82,11 @@ var _auto_applied := false
 var unmanaged: Array = []
 var pane_a: ViewerPane
 var pane_b: ViewerPane
+var enhance_panel  # scripts/enhance_panel.gd (untyped: it depends on the Backend autoload)
+var build_btn: Button
+var pane_b_enhanced := ""  # tag whose ENHANCED preview pane B is showing (keep it until another model is picked)
+var needs_build: Array = []
+var model_info := {}  # tag -> entry from the engine's model list
 
 
 func _ready() -> void:
@@ -115,6 +126,9 @@ func _build() -> void:
 	drift_btn = _btn("Re-apply swaps to patched files", _on_accept_drift)
 	drift_btn.visible = false
 	top.add_child(drift_btn)
+	build_btn = _btn("Build enhanced models", _on_build_pending)
+	build_btn.visible = false
+	top.add_child(build_btn)
 	status_label = _label("")
 	top.add_child(status_label)
 	mode_label = _label("")
@@ -191,7 +205,7 @@ func _build() -> void:
 	panes.add_child(pane_b)
 	var steps := _label("HOW IT WORKS   1) Choose the model to REPLACE (pane A): pick a Zone and then an NPC, or pick a Race  -  both are tabs on the left."
 			+ "    2) Choose the model to replace it WITH (pane B): click any model in the list below."
-			+ "    3) Press Swap A -> B, then Apply all.")
+			+ "    3) Press Swap A -> B (it is applied at once).")
 	steps.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	steps.custom_minimum_size.x = 100
 	steps.modulate = Color(0.75, 0.85, 1.0)
@@ -255,6 +269,12 @@ func _build() -> void:
 	sb.add_child(_btn("Disable", func() -> void: _swap_action("disable")))
 	sb.add_child(_btn("Remove", func() -> void: _swap_action("remove")))
 	sb.add_child(_btn("Disable all", _on_disable_all))
+	right.add_child(HSeparator.new())
+	enhance_panel = load("res://scripts/enhance_panel.gd").new()
+	enhance_panel.log_line.connect(func(t: String, e: bool) -> void: log_line(t, e))
+	enhance_panel.preview_loaded.connect(_on_enhanced_preview)
+	enhance_panel.enhanced_changed.connect(refresh_all)
+	right.add_child(enhance_panel)
 
 	log_box = RichTextLabel.new()
 	log_box.custom_minimum_size.y = 80
@@ -338,8 +358,11 @@ func refresh_all() -> void:
 	var mm = _call(["models"]) if str(Backend.cfg.index) != "" else []
 	models = mm if mm != null else []
 	model_names.clear()
+	model_info.clear()
 	for md in models:
 		model_names[str(md.tag)] = str(md.name)
+		model_info[str(md.tag)] = md
+	enhance_panel.set_upscaler(info.get("upscaler", {}))
 	var z = _call(["zones"])
 	zones_all = z.all if z != null else []
 	_fill_zpick()
@@ -353,7 +376,9 @@ func refresh_all() -> void:
 func _update_banner() -> void:
 	adopt_btn.visible = not unmanaged.is_empty()
 	drift_btn.visible = unmanaged.is_empty() and not drifted.is_empty()
-	mode_label.visible = not unmanaged.is_empty() or not drifted.is_empty()
+	build_btn.visible = unmanaged.is_empty() and drifted.is_empty() and not needs_build.is_empty()
+	enhance_panel.set_blocked("" if unmanaged.is_empty() else "Adopt the existing edits first (button at the top).")
+	mode_label.visible = not unmanaged.is_empty() or not drifted.is_empty() or not needs_build.is_empty()
 	if not unmanaged.is_empty():
 		mode_label.text = "%d edited file(s) are not tracked yet (%s). Click 'Adopt existing edits' before swapping anything." % [
 				unmanaged.size(), ", ".join(unmanaged)]
@@ -361,6 +386,9 @@ func _update_banner() -> void:
 	elif not drifted.is_empty():
 		mode_label.text = "A game patch or another tool changed %s. Your swaps are not on top of the new version yet: click 'Re-apply swaps to patched files'." % ", ".join(drifted)
 		mode_label.modulate = Color(1.0, 0.45, 0.45)
+	elif not needs_build.is_empty():
+		mode_label.text = "%s still needs to be built. Click 'Build enhanced models' (it can take a few minutes)." % ", ".join(needs_build)
+		mode_label.modulate = Color(1.0, 0.85, 0.5)
 	else:
 		mode_label.text = ""
 	_update_add_state()
@@ -391,18 +419,31 @@ func _refresh_swaps() -> void:
 	swaps = l if l != null else []
 	swap_list.clear()
 	for d in swaps:
+		if str(d.get("kind", "swap")) == "enhance":
+			var p: Dictionary = d.params
+			var what: Array = []
+			if int(p.passes) > 0:
+				what.append("%dx polygons" % int(pow(4, int(p.passes))))
+			if int(p.tex_size) > 0:
+				what.append("%d textures" % int(p.tex_size))
+			swap_list.add_item("%s enhance %s: %s" % ["ON " if d.enabled else "off", _nm(str(d.model_tag).to_lower()), ", ".join(what)])
+			continue
 		swap_list.add_item("%s race %d  %s -> %s   [%s]" % ["ON " if d.enabled else "off", int(d.race),
 				d.original_tag, d.model_tag, "all zones" if bool(d.get("all_zones", false)) else ",".join(d.zones)])
 	var st = _call(["status"])
 	drifted = []
+	needs_build = []
 	var stale := false
 	for f in (st if st != null else []):
 		if f.state == "drifted":
 			drifted.append(f.path)
+		elif f.state == "needs-build":
+			needs_build.append(f.path)
 		elif f.state == "needs-apply":
 			stale = true
 	# A patch (or the launcher) can restore the original files: put the swaps back by themselves.
-	if stale and drifted.is_empty() and unmanaged.is_empty() and not _auto_applied:
+	# (Never while an enhanced model still has to be built: that is slow and the user starts it.)
+	if stale and drifted.is_empty() and needs_build.is_empty() and unmanaged.is_empty() and not _auto_applied:
 		_auto_applied = true
 		if _apply_now():
 			log_line("a patch or the launcher had restored the original files; your swaps were re-applied")
@@ -526,6 +567,7 @@ func _on_model_selected(idx: int) -> void:
 	sel_tag = str(m.tag)
 	_describe_candidate(sel_tag)
 	_want(pane_b, sel_tag, "B: WITH THIS  -  %s" % _nm(sel_tag))
+	enhance_panel.set_target(sel_tag, _nm(sel_tag), bool(m.get("enhanceable", false)))
 	_run_check()
 	_update_add_state()
 
@@ -574,6 +616,8 @@ func _run_check() -> void:
 ## Show a model in a pane: instantly if cached, otherwise convert on a worker thread.
 func _want(pane: ViewerPane, tag: String, title: String) -> void:
 	tag = tag.to_lower()
+	if pane == pane_b:
+		pane_b_enhanced = ""
 	pane.set_title(title)
 	pane_want[pane] = tag
 	var p: String = Backend.preview_path(tag)
@@ -589,6 +633,8 @@ func _on_preview_ready(tag: String, r: Dictionary) -> void:
 	for pane in [pane_a, pane_b]:
 		if pane_want.get(pane, "") != tag:
 			continue
+		if pane == pane_b and pane_b_enhanced == tag:
+			continue  # the enhanced preview is on show; do not replace it with the original
 		var data: Dictionary = r.get("data", {}) if r.get("ok", false) else {}
 		var st: String = str(data.get("status", "error"))
 		if st == "ok" or st == "cached":
@@ -602,6 +648,18 @@ func _on_preview_ready(tag: String, r: Dictionary) -> void:
 		pane.clear_model()
 		pane.show_message("no preview for %s\n%s" % [tag.to_upper(), why.left(120)])
 		log_line("preview %s: %s" % [tag, why.left(200)], true)
+
+
+# ------------------------------------------------------------------ enhance
+func _on_enhanced_preview(path: String, title: String) -> void:
+	pane_b.set_title(title)
+	if pane_b.set_model(path) == OK:
+		pane_b_enhanced = sel_tag
+		log_line("showing the enhanced %s in B; nothing in your game has changed" % _nm(sel_tag))
+
+
+func _on_build_pending() -> void:
+	enhance_panel.build_pending()
 
 
 # ------------------------------------------------------------------ swaps

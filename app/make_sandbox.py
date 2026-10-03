@@ -31,6 +31,12 @@ def main():
         van = os.path.join(a.vanilla, name)
         shutil.copy(van if os.path.exists(van) else p, os.path.join(OUT, name))
         n += 1
+    for arc in ("cth.eqg",):      # a small EQG model so Enhance can be exercised without touching the real install
+        src = os.path.join(a.vanilla, arc)
+        if not os.path.exists(src):
+            src = os.path.join(a.live, arc)
+        if os.path.exists(src):
+            shutil.copy(src, os.path.join(OUT, arc))
     van = os.path.join(a.vanilla, "GlobalLoad.txt")
     shutil.copy(van if os.path.exists(van) else os.path.join(a.live, "Resources", "GlobalLoad.txt"),
                 os.path.join(OUT, "Resources", "GlobalLoad.txt"))

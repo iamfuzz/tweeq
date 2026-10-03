@@ -29,6 +29,7 @@ import os
 import re
 import sys
 
+from . import enhance
 from .discover import discover, missing_files, to_native
 from .engine import SwapError, Swapper
 from .compat import CompatDB, check_swap
@@ -36,7 +37,7 @@ from .kinds import DEFAULT_RULES, Kinds
 from .models import ModelIndex
 from .names import build_names, is_listable, load_overrides, load_race_names
 from .peq import npc_groups_in_zone, race_summary, zones_for_race
-from .preview import ensure_preview
+from .preview import ensure_enhanced_preview, ensure_preview
 from .racedata import RaceData
 
 CONTRACT = 1
@@ -62,11 +63,41 @@ def _reports(reps):
 
 
 def _decision(d):
+    if d.get("kind") == "enhance":
+        return {"id": d["id"], "kind": "enhance", "enabled": d["enabled"], "model_tag": d["model_tag"],
+                "container": d["container"], "params": d["params"], "notes": d["notes"]}
     o = d["originals"][str(d["genders"][0])]
-    return {"id": d["id"], "enabled": d["enabled"], "race": d["race"], "genders": d["genders"],
+    return {"id": d["id"], "kind": "swap", "enabled": d["enabled"], "race": d["race"], "genders": d["genders"],
             "original_tag": o["tag"], "model_tag": d["model_tag"], "zones": d["zones"],
             "all_zones": bool(d.get("all_zones")),
             "height": d["height"], "list_archive": d["list_archive"], "notes": d["notes"]}
+
+
+def _upscaler_info(sw) -> dict:
+    d = sw._esrgan()
+    return {"installed": bool(d), "path": d, "install_dir": enhance.upscaler_dir(sw.vault),
+            "version": enhance.UPSCALER_VERSION, "url": enhance.UPSCALER_ZIP_URL}
+
+
+def _cancel_checker(path):
+    """Stale cancel files from an earlier run are cleared first, so a new command is not cancelled at birth."""
+    if not path:
+        return None
+    if os.path.exists(path):
+        os.remove(path)
+    return lambda: os.path.exists(path)
+
+
+def _progress_writer(path):
+    if not path:
+        return None
+
+    def write(stage, pct):
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"stage": stage, "pct": round(float(pct), 3)}, f)
+        os.replace(tmp, path)
+    return write
 
 
 def all_zone_lists(eq: str) -> list[str]:
@@ -82,6 +113,9 @@ def build_parser():
     ap.add_argument("--vanilla", help="folder of vanilla copies of racedata/zone lists (enables the unmanaged-edit guard + adopt)")
     ap.add_argument("--models", help="folder holding the model archives (read-only); default: --eq")
     ap.add_argument("--compat", help="model_compat.json (default: next to --index)")
+    ap.add_argument("--esrgan", help="folder with realesrgan-ncnn-vulkan (default: <app data>/tools/realesrgan)")
+    ap.add_argument("--progress-file", help="long commands write {stage,pct} JSON here for the UI to poll")
+    ap.add_argument("--cancel-file", help="a long command stops cleanly when this file appears")
     ap.add_argument("--json", action="store_true")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("adopt")
@@ -90,6 +124,17 @@ def build_parser():
     for n in ("info", "status", "plan", "list", "restore"):
         sub.add_parser(n)
     p = sub.add_parser("apply"); p.add_argument("--accept-drift", action="store_true")
+    for n in ("enhance-plan", "enhance-preview", "enhance"):
+        p = sub.add_parser(n); p.add_argument("tag")
+        p.add_argument("--passes", type=int, default=0); p.add_argument("--tex-size", type=int, default=0)
+        p.add_argument("--engine", default="auto")
+        if n == "enhance-preview":
+            p.add_argument("--out", required=True)
+        if n == "enhance":
+            p.add_argument("--take-over", action="store_true")
+    sub.add_parser("upscaler-status")
+    p = sub.add_parser("upscaler-install"); p.add_argument("--from-zip")
+    sub.add_parser("upscaler-remove")
     p = sub.add_parser("races"); p.add_argument("--filter", default="")
     p = sub.add_parser("models"); p.add_argument("--filter", default="")
     p = sub.add_parser("zones"); p.add_argument("--race", type=int)
@@ -115,18 +160,21 @@ def run(a) -> object:
         raise SwapError("--eq and --vault are required for this command")
     kinds = Kinds(DEFAULT_RULES, os.path.join(a.vault, "model_kinds.json"))
     idx = ModelIndex(a.index, a.eq, kinds) if a.index else None
-    sw = Swapper(a.eq, a.vault, idx)
+    sw = Swapper(a.eq, a.vault, idx, esrgan_dir=a.esrgan)
+    progress = _progress_writer(a.progress_file)
+    cancel = _cancel_checker(a.cancel_file)
     unmanaged = sw.unmanaged_edits(a.vanilla) if a.vanilla and os.path.isdir(a.vanilla) else []
     if a.cmd == "adopt":
         if not a.vanilla or not os.path.isdir(a.vanilla):
             raise SwapError("adopt needs --vanilla DIR (a folder with vanilla copies of the edited files)")
         return sw.adopt_from_vanilla(a.vanilla)
-    if a.cmd in ("swap", "apply") and unmanaged:
+    if a.cmd in ("swap", "apply", "enhance") and unmanaged:
         raise SwapError("these files differ from your vanilla backups and are not tracked by this app yet: "
                         f"{', '.join(unmanaged)}. Run 'adopt' first, or the app would treat your edits as the originals.")
     if a.cmd == "info":
         return {"contract": CONTRACT, "eq": a.eq, "unmanaged_edits": unmanaged, "models": len(idx.tags()) if idx else None,
                 "peq": bool(a.peq and os.path.exists(a.peq)), "swaps": len(sw.decisions()),
+                "upscaler": _upscaler_info(sw),
                 "files": _reports(sw.status())}
     if a.cmd in ("status", "plan"):
         return _reports(sw.apply(dry_run=True) if a.cmd == "plan" else sw.status())
@@ -166,7 +214,8 @@ def run(a) -> object:
             if f and f not in f"{name} {t} {r.container}".lower():
                 continue
             out.append({"tag": t, "name": name, "format": r.format, "container": r.container,
-                        "list_archive": r.list_archive, "notes": r.notes})
+                        "list_archive": r.list_archive, "notes": r.notes,
+                        "enhanceable": r.format == "eqg_mds"})
         def sort_key(m):  # alphabetical ignoring "a/an/the"; names starting with a digit last
             n = re.sub(r"^(a|an|the) ", "", m["name"].lower())
             return (n[:1].isdigit(), n, m["tag"])
@@ -229,7 +278,29 @@ def run(a) -> object:
         zones = "all" if a.zones.strip().lower() == "all" else [z for z in a.zones.split(",") if z]
         return _decision(sw.add_swap(a.race, a.tag, zones, gs, a.height))
     if a.cmd == "apply":
-        return _reports(sw.apply(accept_drift=a.accept_drift))
+        return _reports(sw.apply(accept_drift=a.accept_drift, progress=progress, cancel=cancel))
+    if a.cmd in ("enhance-plan", "enhance-preview", "enhance"):
+        if not idx:
+            raise SwapError("no model index given (--index)")
+        params = enhance.Params(a.passes, a.tex_size, a.engine).validate()
+        ref = idx.resolve(a.tag)
+        if ref.format != "eqg_mds":
+            raise SwapError(f"{a.tag.upper()} is a classic model; Enhance supports EQG (Luclin and later) models for now")
+        if a.cmd == "enhance":
+            return _decision(sw.add_enhance(a.tag, params, vanilla_dir=a.vanilla, take_over=a.take_over))
+        base = sw.base_path(ref.container)
+        if a.cmd == "enhance-plan":
+            return enhance.plan(base, params, sw._esrgan())
+        return ensure_enhanced_preview(idx, a.tag, a.out, base, params, sw._esrgan(), progress=progress, cancel=cancel)
+    if a.cmd == "upscaler-status":
+        return _upscaler_info(sw)
+    if a.cmd == "upscaler-install":
+        try:
+            return enhance.install_upscaler(a.vault, zip_path=a.from_zip, progress=progress)
+        except enhance.EnhanceError as e:
+            raise SwapError(str(e))
+    if a.cmd == "upscaler-remove":
+        return {"removed": enhance.remove_upscaler(a.vault)}
     if a.cmd == "restore":
         sw.restore_all()
         return {"restored": True}
@@ -242,13 +313,21 @@ def run(a) -> object:
     return {"id": a.id}
 
 
+def _list_line(d) -> str:
+    on = "on " if d["enabled"] else "off"
+    if d["kind"] == "enhance":
+        p = d["params"]
+        return (f"{d['id'][:8]} {on} enhance {d['model_tag']} passes={p['passes']} "
+                f"textures={p['tex_size'] or 'off'} ({d['container']})")
+    return (f"{d['id'][:8]} {on} race {d['race']} {d['original_tag']} -> {d['model_tag']} "
+            f"zones={'all' if d['all_zones'] else ','.join(d['zones'])}" + (f" height={d['height']}" if d["height"] else ""))
+
+
 def render_text(cmd: str, data) -> str:
     if cmd in ("status", "plan", "apply"):
         return "\n".join(f"{r['state']:12s} {r['path']}" for r in data)
     if cmd == "list":
-        return "\n".join(f"{d['id'][:8]} {'on ' if d['enabled'] else 'off'} race {d['race']} "
-                         f"{d['original_tag']} -> {d['model_tag']} zones={'all' if d['all_zones'] else ','.join(d['zones'])}"
-                         + (f" height={d['height']}" if d["height"] else "") for d in data)
+        return "\n".join(_list_line(d) for d in data)
     if cmd == "races":
         return "\n".join(f"race {r['race']:4d} {','.join(r['tags'].values()):10s}"
                          + (f" (was {','.join(r['original_tags'].values())})" if r["swapped"] else "")
@@ -264,7 +343,7 @@ def main(argv=None) -> int:
     a = build_parser().parse_args(argv)
     try:
         data = run(a)
-    except (SwapError, KeyError, ValueError) as e:
+    except (SwapError, enhance.EnhanceError, KeyError, ValueError) as e:
         msg = e.args[0] if isinstance(e, KeyError) and e.args else str(e)
         if a.json:
             print(json.dumps({"ok": False, "error": str(msg)}))

@@ -9,6 +9,7 @@ app/sandbox/
 *.glb
 data/*
 !data/model_kinds.json
+!data/model_names.json
 !data/peq_slim.sqlite
 
 # Not part of Tweeq: texture/zone upscaler project and its working files

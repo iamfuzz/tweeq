@@ -115,3 +115,56 @@ def ensure_preview(eq_dir: str, index: ModelIndex, tag: str, out_dir: str) -> di
     with open(meta_p, "w") as f:
         json.dump(key, f)
     return {"status": "ok", "path": out, "format": fmt, "seconds": round(time.time() - t0, 2)}
+
+
+def ensure_enhanced_preview(index: ModelIndex, tag: str, out_dir: str, base_path: str, params, esrgan_dir=None,
+                            progress=None, cancel=None) -> dict:
+    """Build an enhanced copy of `base_path` (the model's ORIGINAL archive) in a temp folder and convert it to a
+    .glb for the viewer. The install is never touched. Cached per (archive, settings, pipeline)."""
+    from . import enhance as enh
+    tag = tag.lower()
+    cand = next((c for c in index.candidates(tag) if c["format"] == "eqg_mds"
+                 and c["container"].lower() == os.path.basename(base_path).lower()), None)
+    if cand is None:
+        return {"status": "unsupported", "error": "Enhance previews need an EQG model"}
+    eff = params.resolved(esrgan_dir)
+    os.makedirs(out_dir, exist_ok=True)
+    stem = f"{tag}.enh-{eff.key()}"
+    out, meta_p = os.path.join(out_dir, stem + ".glb"), os.path.join(out_dir, stem + ".json")
+    st = os.stat(base_path)
+    key = {"container": cand["container"], "size": st.st_size, "mtime": int(st.st_mtime),
+           "pipeline": PIPELINE_VERSION, "params": eff.key()}
+    if os.path.exists(out) and os.path.exists(meta_p):
+        try:
+            with open(meta_p) as f:
+                if json.load(f) == key:
+                    return {"status": "cached", "path": out, "format": "eqg_mds", "seconds": 0.0}
+        except (OSError, ValueError):
+            pass
+    t0 = time.time()
+    tmp = tempfile.mkdtemp(prefix="eqenhprev-")
+    try:
+        with open(base_path, "rb") as f:
+            base = f.read()
+        try:
+            data, report = enh.build_enhanced(base, eff, esrgan_dir, progress=progress, cancel=cancel)
+        except enh.EnhanceError as e:
+            return {"status": "error", "format": "eqg_mds", "error": str(e)}
+        with open(os.path.join(tmp, cand["container"]), "wb") as f:
+            f.write(data)
+        n = sum(1 for cs in index.by_tag.values() for c in cs
+                if c["container"] == cand["container"] and c["format"] == "eqg_mds")
+        tmp_out = out[:-4] + ".part.glb"
+        ok, msg = _eqg(tmp, cand, n, tag, tmp_out)
+        if not ok or not os.path.exists(tmp_out):
+            if os.path.exists(tmp_out):
+                os.remove(tmp_out)
+            return {"status": "error", "format": "eqg_mds", "error": msg.strip() or "converter produced no file"}
+        os.replace(tmp_out, out)
+        with open(meta_p, "w") as f:
+            json.dump(key, f)
+        return {"status": "ok", "path": out, "format": "eqg_mds", "seconds": round(time.time() - t0, 2),
+                "report": {"models": report["models"], "warnings": report["warnings"],
+                           "bytes_out": report["bytes_out"]}}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
