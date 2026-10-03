@@ -241,10 +241,41 @@ func _run() -> void:
 	m._update_add_state()
 	check(m.check_worst == "error" and m.add_btn.disabled, "same-model swap raises an error and disables Add swap")
 
+	await _enlarge_checks(m)
 	await _enhance_checks(m, backend)
 
 	print("DONE failures=%d" % failures)
 	quit(1 if failures > 0 else 0)
+
+
+## Enlarging a preview: it fills the window, nothing is reloaded, and Esc / double-click / the button put things back.
+func _enlarge_checks(m: Control) -> void:
+	var had_model: bool = m.pane_a.has_model()
+	m._toggle_maximize(m.pane_a)
+	await process_frame
+	await process_frame
+	check(m.pane_a.is_visible_in_tree() and not m.pane_b.is_visible_in_tree() and not m.tabs.is_visible_in_tree() and not m.model_list.is_visible_in_tree() and not m.swap_list.is_visible_in_tree(),
+			"Enlarge: only pane A is left on screen")
+	check(m.pane_a.size.x > m.size.x * 0.8 and m.pane_a.size.y > m.size.y * 0.6,
+			"Enlarge: pane A fills the window (%s of %s)" % [str(m.pane_a.size), str(m.size)])
+	check(m.pane_a.has_model() == had_model, "Enlarge: the model was not reloaded")
+	var esc := InputEventKey.new()
+	esc.keycode = KEY_ESCAPE
+	esc.pressed = true
+	m._unhandled_key_input(esc)
+	await process_frame
+	check(m._max_pane == null and m.pane_a.is_visible_in_tree() and m.pane_b.is_visible_in_tree() and m.tabs.is_visible_in_tree() and m.model_list.is_visible_in_tree() and m.swap_list.is_visible_in_tree(),
+			"Esc restores the normal layout")
+	var dbl := InputEventMouseButton.new()
+	dbl.button_index = MOUSE_BUTTON_LEFT
+	dbl.pressed = true
+	dbl.double_click = true
+	m.pane_b._on_gui_input(dbl)
+	await process_frame
+	check(m._max_pane == m.pane_b and m.pane_b.is_visible_in_tree() and not m.pane_a.is_visible_in_tree(), "double-clicking pane B enlarges it")
+	m._toggle_maximize(m.pane_b)
+	await process_frame
+	check(m._max_pane == null and m.pane_a.is_visible_in_tree() and m.pane_b.is_visible_in_tree(), "the button/double-click again restores")
 
 
 func _wait_idle(panel, limit_s: float) -> bool:

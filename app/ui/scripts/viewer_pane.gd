@@ -4,7 +4,11 @@ extends Control
 ## Two of these side by side give the A/B comparison; dragging one never moves the other
 ## because each pane's mouse overlay only receives events inside its own rect.
 
+## Emitted by the Enlarge/Restore button and by double-clicking the pane; the main window does the enlarging.
+signal maximize_requested(pane)
+
 var title := ""
+var _max_btn: Button
 var _vp: SubViewport
 var _pivot: Node3D
 var _cam: Camera3D
@@ -58,6 +62,17 @@ func _ready() -> void:
 	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	overlay.gui_input.connect(_on_gui_input)
 	add_child(overlay)
+	_max_btn = Button.new()                      # added after the overlay so it sits on top and gets the click
+	_max_btn.text = "Enlarge"
+	_max_btn.focus_mode = Control.FOCUS_NONE
+	_max_btn.anchor_left = 1.0
+	_max_btn.anchor_right = 1.0
+	_max_btn.offset_left = -76.0
+	_max_btn.offset_right = -6.0
+	_max_btn.offset_top = 4.0
+	_max_btn.offset_bottom = 30.0
+	_max_btn.pressed.connect(func() -> void: maximize_requested.emit(self))
+	add_child(_max_btn)
 	_title_label = Label.new()
 	_title_label.text = title
 	_title_label.position = Vector2(6, 2)
@@ -70,6 +85,12 @@ func _ready() -> void:
 	add_child(_msg)
 	_apply_camera()
 	show_message("no model")
+
+
+## The main window calls this so the button reads "Restore" while this pane is the enlarged one.
+func set_maximized(on: bool) -> void:
+	if _max_btn:
+		_max_btn.text = "Restore" if on else "Enlarge"
 
 
 func show_message(text: String) -> void:
@@ -170,7 +191,10 @@ func _apply_camera() -> void:
 func _on_gui_input(ev: InputEvent) -> void:
 	if ev is InputEventMouseButton:
 		var mb: InputEventMouseButton = ev
-		if mb.button_index == MOUSE_BUTTON_LEFT:
+		if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed and mb.double_click:
+			_dragging = false
+			maximize_requested.emit(self)            # double-click toggles enlarge / restore
+		elif mb.button_index == MOUSE_BUTTON_LEFT:
 			_dragging = mb.pressed
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
 			_dist = maxf(_dist * 0.9, 0.5)

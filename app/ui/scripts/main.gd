@@ -16,6 +16,7 @@ A swap applies in [b]every zone[/b], so the race never falls back to a default m
 
 [b]The viewers[/b]
 Drag to rotate, mouse wheel to zoom. The two viewers work independently. The first time a model is shown it is converted, which takes a moment.
+[b]Enlarge[/b] (button in a viewer's top-right corner, or double-click the viewer) makes that viewer fill the whole window so you can study the model; [b]Restore[/b], the same double-click, or the Esc key brings the normal layout back.
 
 [b]Native height[/b]
 The scale the client uses for the model. The app fills in the replacement model's own value when it knows it; leave it unless a model looks the wrong size.
@@ -86,6 +87,10 @@ var enhance_panel  # scripts/enhance_panel.gd (untyped: it depends on the Backen
 var build_btn: Button
 var pane_b_enhanced := ""  # tag whose ENHANCED preview pane B is showing (keep it until another model is picked)
 var needs_build: Array = []
+var panes_box: HBoxContainer          # holds panes A and B
+var _max_pane = null                  # the pane currently enlarged to fill the window (null = normal layout)
+var _max_hidden: Array = []           # controls hidden while a pane is enlarged
+var _max_old_flags := 0
 var scan_note := ""  # shown in the banner when the model list is missing or may be out of date
 var scan_overlay  # scripts/scan_overlay.gd
 var rescan_btn: Button
@@ -202,6 +207,7 @@ func _build() -> void:
 	detail_label.custom_minimum_size.x = 100
 	centre.add_child(detail_label)
 	var panes := HBoxContainer.new()
+	panes_box = panes
 	centre.add_child(panes)
 	pane_a = ViewerPane.new("A: REPLACE THIS")
 	pane_a.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -211,6 +217,8 @@ func _build() -> void:
 	pane_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	pane_b.custom_minimum_size = Vector2(300, 270)
 	panes.add_child(pane_b)
+	pane_a.maximize_requested.connect(_toggle_maximize)
+	pane_b.maximize_requested.connect(_toggle_maximize)
 	var steps := _label("HOW IT WORKS   1) Choose the model to REPLACE (pane A): pick a Zone and then an NPC, or pick a Race  -  both are tabs on the left."
 			+ "    2) Choose the model to replace it WITH (pane B): click any model in the list below."
 			+ "    3) Press Swap A -> B (it is applied at once).")
@@ -666,6 +674,44 @@ func _on_preview_ready(tag: String, r: Dictionary) -> void:
 		pane.clear_model()
 		pane.show_message("no preview for %s\n%s" % [tag.to_upper(), why.left(120)])
 		log_line("preview %s: %s" % [tag, why.left(200)], true)
+
+
+# ------------------------------------------------------------------ enlarge a preview
+## Enlarge `pane` to fill the whole window (hide everything else), or put the normal layout back. The pane itself is
+## never reloaded, so the model, its animation and the camera angle stay as they were.
+func _toggle_maximize(pane) -> void:
+	if _max_pane != null:
+		_restore_layout()
+		return
+	_max_pane = pane
+	var n: Node = pane
+	while n != self and n.get_parent() != null:
+		for sib in n.get_parent().get_children():
+			if sib != n and sib is Control and sib != scan_overlay and sib.visible:
+				sib.visible = false
+				_max_hidden.append(sib)
+		n = n.get_parent()
+	_max_old_flags = panes_box.size_flags_vertical
+	panes_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	pane.set_maximized(true)
+
+
+func _restore_layout() -> void:
+	for c in _max_hidden:
+		if is_instance_valid(c):
+			c.visible = true
+	_max_hidden.clear()
+	panes_box.size_flags_vertical = _max_old_flags
+	if _max_pane != null:
+		_max_pane.set_maximized(false)
+	_max_pane = null
+	_update_banner()                     # anything that changed while the window was covered gets its right visibility
+
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	if _max_pane != null and event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		_restore_layout()
+		get_viewport().set_input_as_handled()
 
 
 # ------------------------------------------------------------------ enhance
