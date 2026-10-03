@@ -140,10 +140,10 @@ func is_busy() -> bool:
 
 
 ## Build enhanced archives that are wanted but not built yet (after a patch, or after installing the upscaler).
-func build_pending() -> void:
+func build_pending(extra_args: Array = []) -> void:
 	_pending_id = ""
 	_begin("building ...")
-	Backend.call_cli_async("enh_apply", _progress_args() + ["apply"])
+	Backend.call_cli_async(_key("enh_apply"), _progress_args() + ["apply"] + extra_args)
 
 
 # ------------------------------------------------------------------ state
@@ -199,7 +199,7 @@ func _request_plan() -> void:
 	_plan_sig = "%s|%d|%d" % [_tag, int(_opts().passes), int(_opts().tex)]
 	_estimate.text = "working out what this would do ..."
 	_estimate.modulate = Color(0.75, 0.85, 1.0)
-	Backend.call_cli_async("enh_plan:" + _plan_sig, ["enhance-plan"] + _args())
+	Backend.call_cli_async(_key("enh_plan:" + _plan_sig), ["enhance-plan"] + _args())
 
 
 func _fmt_bytes(n: int) -> String:
@@ -299,20 +299,30 @@ func _on_cancel() -> void:
 
 func _on_preview() -> void:
 	_begin("starting ...")
-	Backend.call_cli_async("enh_prev:" + _tag, _progress_args() + ["enhance-preview"] + _args(["--out", str(Backend.cfg.previews_wsl)]))
+	Backend.call_cli_async(_key("enh_prev:" + _tag), _progress_args() + ["enhance-preview"] + _args(["--out", str(Backend.cfg.previews_wsl)]))
 
 
 func _on_enhance() -> void:
 	_begin("recording ...")
-	Backend.call_cli_async("enh_add", ["enhance"] + _args())
+	Backend.call_cli_async(_key("enh_add"), ["enhance"] + _args())
 
 
 func _add_with_take_over() -> void:
 	_begin("recording ...")
-	Backend.call_cli_async("enh_add", ["enhance"] + _args(["--take-over"]))
+	Backend.call_cli_async(_key("enh_add"), ["enhance"] + _args(["--take-over"]))
 
 
-func _on_cli_done(key: String, r: Dictionary) -> void:
+## Backend.cli_done is a broadcast: tag every request with this panel's id so it only ever reacts to its own
+## (another panel must never take our enhance result for its own, e.g. remove our decision when ITS apply failed).
+func _key(kind: String) -> String:
+	return "%s@%d" % [kind, get_instance_id()]
+
+
+func _on_cli_done(tagged: String, r: Dictionary) -> void:
+	var at := tagged.rfind("@")
+	if at < 0 or tagged.substr(at + 1) != str(get_instance_id()):
+		return
+	var key := tagged.left(at)
 	if key.begins_with("enh_plan:"):
 		if key.substr(9) != _plan_sig:
 			return  # a newer choice has been made since
@@ -344,7 +354,7 @@ func _on_cli_done(key: String, r: Dictionary) -> void:
 			return
 		_pending_id = str(r.data.id)
 		_stage.text = "building ..."
-		Backend.call_cli_async("enh_apply", _progress_args() + ["apply"])
+		Backend.call_cli_async(_key("enh_apply"), _progress_args() + ["apply"])
 		return
 	if key == "enh_apply":
 		_end()
@@ -387,7 +397,7 @@ func _confirm_take_over(err: String) -> void:
 func _on_upscaler_button() -> void:
 	if bool(_upscaler.get("installed", false)):
 		_begin("removing ...", false)
-		Backend.call_cli_async("enh_up_remove", ["upscaler-remove"])
+		Backend.call_cli_async(_key("enh_up_remove"), ["upscaler-remove"])
 		return
 	var dlg := ConfirmationDialog.new()
 	dlg.title = "Get the AI upscaler?"
@@ -400,7 +410,7 @@ func _on_upscaler_button() -> void:
 	dlg.confirmed.connect(func() -> void:
 		dlg.queue_free()
 		_begin("downloading ...", false)
-		Backend.call_cli_async("enh_up_install", _progress_args() + ["upscaler-install"]))
+		Backend.call_cli_async(_key("enh_up_install"), _progress_args() + ["upscaler-install"]))
 	dlg.canceled.connect(func() -> void: dlg.queue_free())
 	add_child(dlg)
 	dlg.popup_centered(Vector2i(640, 340))

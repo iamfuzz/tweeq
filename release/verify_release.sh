@@ -28,9 +28,11 @@ print(v)' "$1" 2>/dev/null; }
 snapshot() {   # sha256 of everything verification must never change
   { find "$REAL_EQ" -maxdepth 1 -type f \( -name 'racedata.txt' -o -name '*_chr.txt' -o -name 'cth.eqg' -o -name 'tmt_chr.s3d' \) -print0 | sort -z | xargs -0 sha256sum
     sha256sum "$REAL_EQ/Resources/GlobalLoad.txt"
-    [ -d "$REAL_APPDATA/vault" ] && find "$REAL_APPDATA/vault" -type f -print0 | sort -z | xargs -0 sha256sum; } 2>/dev/null | sha256sum | cut -d' ' -f1
+    for v in "$REAL_APPDATA"/vault "$REAL_APPDATA"/vault_*; do [ -d "$v" ] && find "$v" -type f -print0 | sort -z | xargs -0 sha256sum; done; } 2>/dev/null | sha256sum | cut -d' ' -f1
 }
 
+# A wrong REAL_EQ would make both snapshots hash nothing and the safety check pass for no reason: refuse to start.
+[ -f "$REAL_EQ/racedata.txt" ] && [ -f "$REAL_EQ/Resources/GlobalLoad.txt" ] || { echo "REAL_EQ ($REAL_EQ) is not an EverQuest folder"; exit 2; }
 [ -f "$SETUP" ] || { echo "no installer at $SETUP: run build_release.sh first"; exit 2; }
 DESKTOP="$(powershell.exe -NoProfile -Command "[Environment]::GetFolderPath('Desktop')" | tr -d '\r')"
 STARTMENU="$(powershell.exe -NoProfile -Command "[Environment]::GetFolderPath('Programs')" | tr -d '\r')"

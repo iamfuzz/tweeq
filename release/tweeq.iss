@@ -163,7 +163,7 @@ begin
             Again := SuppressibleMsgBox('EverQuest is running. Close it completely, then click Retry.',
               mbError, MB_RETRYCANCEL, IDCANCEL) = IDRETRY
           else
-            SuppressibleMsgBox('Some of your EverQuest files could not be restored (a game patch may have replaced them). ' +
+            SuppressibleMsgBox('Some of your EverQuest files could not be restored (a game patch may have replaced them, or the EverQuest folder could not be found). ' +
               'Tweeq left those files alone, and its saved originals are kept in ' + DataRoot + '.',
               mbInformation, MB_OK, IDOK);
         end

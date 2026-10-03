@@ -187,7 +187,7 @@ class TestUninstallRestore(unittest.TestCase):
     def test_a_vanished_install_is_skipped_and_no_vaults_is_fine(self):
         shutil.rmtree(self.eq)
         code, r = self.call()
-        self.assertEqual(code, 0, r)
+        self.assertEqual(code, 3, r)           # NOT 0: the installer must not offer to delete the only saved originals
         self.assertEqual(r["data"]["restored"], [])
         self.assertEqual(r["data"]["skipped"][0]["reason"], "the EverQuest folder is gone")
         shutil.rmtree(self.vault)

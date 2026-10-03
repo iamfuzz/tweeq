@@ -18,7 +18,7 @@ IPC contract the Godot UI uses:   {"ok": true, "data": ...}  or  {"ok": false, "
   swap RACE TAG --zones a,b [--genders 0,1] [--height 6]
   remove|enable|disable ID
   apply [--accept-drift]       write all enabled swaps (re-run after patches)
-  restore                      put every managed file back to its original
+  restore [--force]            put every managed file back to its original (not over files a patch changed, unless --force)
 """
 from __future__ import annotations
 
@@ -139,9 +139,12 @@ def build_parser():
     sub.add_parser("disable-all")
     p = sub.add_parser("discover"); p.add_argument("--check")
     p = sub.add_parser("uninstall-restore"); p.add_argument("--data-root", required=True)
-    for n in ("info", "status", "plan", "list", "restore"):
+    for n in ("info", "status", "plan", "list"):
         sub.add_parser(n)
+    p = sub.add_parser("restore"); p.add_argument("--force", action="store_true",
+                                                  help="also overwrite files a game patch changed since Tweeq wrote them")
     p = sub.add_parser("apply"); p.add_argument("--accept-drift", action="store_true")
+    p.add_argument("--no-build", action="store_true", help="never start an enhanced-archive build (leave it needs-build)")
     for n in ("enhance-plan", "enhance-preview", "enhance"):
         p = sub.add_parser(n); p.add_argument("tag")
         p.add_argument("--passes", type=int, default=0); p.add_argument("--tex-size", type=int, default=0)
@@ -300,7 +303,7 @@ def run(a) -> object:
         zones = "all" if a.zones.strip().lower() == "all" else [z for z in a.zones.split(",") if z]
         return _decision(sw.add_swap(a.race, a.tag, zones, gs, a.height))
     if a.cmd == "apply":
-        return _reports(sw.apply(accept_drift=a.accept_drift, progress=progress, cancel=cancel))
+        return _reports(sw.apply(accept_drift=a.accept_drift, progress=progress, cancel=cancel, no_build=a.no_build))
     if a.cmd in ("enhance-plan", "enhance-preview", "enhance"):
         if not idx:
             raise SwapError(_no_index(a))
@@ -340,8 +343,7 @@ def run(a) -> object:
     if a.cmd == "upscaler-remove":
         return {"removed": enhance.remove_upscaler(a.vault)}
     if a.cmd == "restore":
-        sw.restore_all()
-        return {"restored": True}
+        return sw.restore_all(force=a.force)
     if a.cmd == "disable-all":
         return {"disabled": sw.set_all_enabled(False)}
     if a.cmd == "remove":
@@ -420,8 +422,8 @@ def main(argv=None) -> int:
             print(f"error: {msg}", file=sys.stderr)
         return 3
     print(json.dumps({"ok": True, "data": data}) if a.json else render_text(a.cmd, data))
-    if a.cmd == "uninstall-restore" and (data["drifted"] or data["errors"]):
-        _log(f"uninstall-restore: left alone {data['drifted']}; errors {data['errors']}")
+    if a.cmd == "uninstall-restore" and (data["drifted"] or data["errors"] or data["skipped"]):
+        _log(f"uninstall-restore: left alone {data['drifted']}; skipped {data['skipped']}; errors {data['errors']}")
         return 3                                    # the installer tells the user some files were not restored
     return 0
 

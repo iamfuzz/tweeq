@@ -39,6 +39,10 @@ func _run() -> void:
 	if backend == null:
 		quit(1)
 		return
+	# The exported test build also starts the project's main scene by itself. Drop it before anything else so this test
+	# drives the ONE app window a user has; a second copy shares Backend and would react to the same engine results.
+	if current_scene != null:
+		current_scene.free()
 	# the default mode is the real install now; the test must NEVER touch it, so force the sandbox first
 	backend.first_run = false  # never auto-discover / save config during tests
 	backend.cfg.mode = "sandbox"
@@ -348,6 +352,11 @@ func _enhance_checks(m: Control, backend: Node) -> void:
 		if "enhance" in m.swap_list.get_item_text(i):
 			row = i
 	check(row >= 0 and "4x polygons" in m.swap_list.get_item_text(row), "Recorded swaps lists it: %s" % (m.swap_list.get_item_text(row) if row >= 0 else "-"))
+	# engine results are broadcast: a failed build someone else started must not make this panel drop its decision
+	backend.cli_done.emit("enh_apply@1", {"ok": false, "error": "not this panel's build"})
+	backend.cli_done.emit("enh_apply", {"ok": false, "error": "not this panel's build"})
+	check(not p.is_busy() and _state_of(backend, "cth.eqg") == "applied" and backend.call_cli(["list"]).data.size() == 1,
+			"the panel ignores engine results it did not ask for")
 	# disable -> original back; enable -> back again (cached build, fast); remove -> original and gone
 	m.swap_list.select(row)
 	m._swap_action("disable")

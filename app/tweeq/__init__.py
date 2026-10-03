@@ -7,4 +7,4 @@ A swap is two text edits (proven in-game, 2026-10-01):
 Everything is recorded as a decision and replayed onto the CURRENT files, so
 swaps survive official patches (the engine never ships or caches game files).
 """
-__version__ = "0.1.0"
+__version__ = "0.1.1"

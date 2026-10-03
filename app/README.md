@@ -15,7 +15,7 @@ files**, so `apply` after an official patch re-creates every swap. Originals are
 - `tweeq/racedata.py`, `zonelist.py` — byte-exact format layers (only edited fields change)
 - `tweeq/models.py` — resolves a tag via `data/installed_model_index.json` (tools/scan_install.py) + GlobalLoad.txt
 - `tweeq/engine.py` — `Swapper`: add/remove/enable swaps, `status`, `apply`, `restore_all`, drift handling
-- `tweeq/peq.py` — optional zone discovery from a user-imported PEQ db (GPL data, never bundled)
+- `tweeq/peq.py` — zone/NPC discovery from a PEQ database: the installer ships a slim GPL extract of the EQEmu/ProjectEQ data (`data/peq_slim.sqlite`, listed in THIRD_PARTY_LICENSES.md); `--peq` can point at your own import instead, and everything works without it
 - `tweeq/cli.py` — `python -m tweeq.cli --eq EQ --vault VAULT --index IDX {swap,plan,apply,status,list,restore,...}`
 - `tests/` — `python3 -W error::ResourceWarning -m unittest discover -s tests -t .`
   (includes an integration test that rebuilds the live PoTime Cazic edit byte-for-byte from the vanilla backups)

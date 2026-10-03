@@ -3,7 +3,7 @@
 
 One pass splits every triangle into four by its edge midpoints. A midpoint vertex interpolates
 position, UV, UV2 and vertex tint, averages the two parents' normals, and gets the merged bone
-weights of its parents; normals are then recomputed area-weighted from the new geometry. Winding,
+weights of its parents; the authored normals are kept (not recomputed, which would split them at UV seams). Winding,
 material ids and face flags are preserved.
 
 Limits (checked BEFORE any work is done, so a model that cannot be enhanced is refused with a clear
@@ -162,8 +162,9 @@ def subdivide_mds(m, passes: int) -> list[dict]:
     for model, st in zip(m.models, stats):
         for _ in range(passes):
             subdivide_once(model, has_weights=model.has_weights)
-        if passes:
-            recalculate_normals(model)
+        # Midpoint subdivision does not change the shape, so the authored normals are kept (each midpoint
+        # averages its parents'). Rebuilding them per vertex index would give the split copies of a vertex on a
+        # UV seam different normals and draw a hard lighting crease along every seam.
         check_model(model, len(m.bones), model.has_weights)
         if (len(model.vertices), len(model.faces)) != (st["verts_after"], st["faces_after"]):
             raise SubdivideError("internal error: result does not match the predicted counts")

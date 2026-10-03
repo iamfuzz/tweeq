@@ -420,7 +420,30 @@ func _update_banner() -> void:
 	_update_add_state()
 
 
+## True (and logged) while an enhanced model is building: it holds the vault, and changing swaps now would be refused
+## by the engine anyway. Wait for it to finish or press Cancel.
+func _engine_busy() -> bool:
+	if enhance_panel != null and enhance_panel.is_busy():
+		log_line("an enhanced model is being built; wait for it to finish (or press Cancel) first", true)
+		return true
+	return false
+
+
+func _has_enabled_enhance() -> bool:
+	for d in swaps:
+		if str(d.get("kind", "swap")) == "enhance" and bool(d.enabled):
+			return true
+	return false
+
+
 func _on_accept_drift() -> void:
+	if _engine_busy():
+		return
+	if _has_enabled_enhance():
+		# Re-baselining can mean rebuilding enhanced archives (minutes): do it in the background with progress + Cancel.
+		log_line("re-applying your swaps; enhanced models are rebuilt in the background ...")
+		enhance_panel.build_pending(["--accept-drift"])
+		return
 	var r = _call(["apply", "--accept-drift"])
 	if r != null:
 		log_line("re-applied your swaps on top of the changed files")
@@ -428,6 +451,8 @@ func _on_accept_drift() -> void:
 
 
 func _on_adopt() -> void:
+	if _engine_busy():
+		return
 	var r = _call(["adopt"])
 	if r == null:
 		return
@@ -469,7 +494,8 @@ func _refresh_swaps() -> void:
 			stale = true
 	# A patch (or the launcher) can restore the original files: put the swaps back by themselves.
 	# (Never while an enhanced model still has to be built: that is slow and the user starts it.)
-	if stale and drifted.is_empty() and needs_build.is_empty() and unmanaged.is_empty() and not _auto_applied:
+	if stale and drifted.is_empty() and needs_build.is_empty() and unmanaged.is_empty() and not _auto_applied \
+			and not (enhance_panel != null and enhance_panel.is_busy()):
 		_auto_applied = true
 		if _apply_now():
 			log_line("a patch or the launcher had restored the original files; your swaps were re-applied")
@@ -477,8 +503,10 @@ func _refresh_swaps() -> void:
 
 
 ## Write every enabled swap to the game files. False (and logged) when the engine refuses.
+## (--no-build: never starts a minutes-long enhanced build on this thread; an unbuilt archive stays "needs-build"
+## and the banner offers the background build.)
 func _apply_now() -> bool:
-	return _call(["apply"]) != null
+	return _call(["apply", "--no-build"]) != null
 
 
 func _fill_zpick() -> void:
@@ -728,6 +756,8 @@ func _on_build_pending() -> void:
 
 # ------------------------------------------------------------------ swaps
 func _on_add_swap() -> void:
+	if _engine_busy():
+		return
 	var args: Array = ["swap", str(int(sel_race.race)), sel_tag, "--zones", "all"]
 	if height_edit.text.strip_edges() != "":
 		args.append_array(["--height", height_edit.text.strip_edges()])
@@ -744,6 +774,8 @@ func _on_add_swap() -> void:
 
 
 func _swap_action(action: String) -> void:
+	if _engine_busy():
+		return
 	var sel := swap_list.get_selected_items()
 	if sel.is_empty():
 		log_line("select a swap in the list first", true)
@@ -756,6 +788,8 @@ func _swap_action(action: String) -> void:
 
 
 func _on_disable_all() -> void:
+	if _engine_busy():
+		return
 	if swaps.is_empty():
 		return
 	if _call(["disable-all"]) != null:

@@ -269,8 +269,13 @@ def _verify(src: str, out: str, before: dict, mds_files: list[str], params: Para
             raise EnhanceError(f"verify: texture {n} is {im.size}, expected {params.tex_size}")
 
 
+# Bump when the enhance pipeline's OUTPUT changes (tools/mds_subdivide.py, tools/enhance_textures.py), so builds cached by
+# an older pipeline are rebuilt instead of reused forever.
+PIPELINE_VERSION = 2
+
+
 def params_hash(base_sha: str, params: Params) -> str:
-    return hashlib.sha256(f"{base_sha}|{params.key()}".encode()).hexdigest()[:20]
+    return hashlib.sha256(f"v{PIPELINE_VERSION}|{base_sha}|{params.key()}".encode()).hexdigest()[:20]
 
 
 # ----------------------------------------------------------------------------- upscaler install

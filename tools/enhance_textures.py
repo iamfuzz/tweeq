@@ -188,7 +188,7 @@ def upscale_color(im: Image.Image, size: int, engine: str, work: str, tag: str, 
     """Returns (RGBA image, engine actually used, warning or None)."""
     a = np.asarray(im.convert("RGBA"))
     alpha = a[..., 3]
-    filled = Image.fromarray(np.clip(bleed(a[..., :3], alpha >= 250), 0, 255).astype(np.uint8))
+    filled = Image.fromarray(np.clip(bleed(a[..., :3], alpha > 0), 0, 255).astype(np.uint8))
     used, warn = "lanczos", None
     big = None
     if engine in ("esrgan", "auto") and esrgan_dir:

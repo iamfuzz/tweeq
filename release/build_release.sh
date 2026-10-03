@@ -113,9 +113,10 @@ say "5. licenses and notices"
 L="$STAGE/licenses"
 cp "$REPO/LICENSE" "$L/LICENSE-GPL-3.0.txt" 2>/dev/null || cp /home/brian/tweeq/LICENSE "$L/LICENSE-GPL-3.0.txt"
 cp "$REPO/THIRD_PARTY_LICENSES.md" "$L/" 2>/dev/null || cp /home/brian/tweeq/THIRD_PARTY_LICENSES.md "$L/"
-fetch_plain() { curl -fsSL --retry 3 -o "$2" "$1" || die "could not fetch $1"; }
-fetch_plain "$GODOT_LICENSE_URL" "$L/godot-LICENSE.txt"
-fetch_plain "$GODOT_COPYRIGHT_URL" "$L/godot-COPYRIGHT.txt"
+# licence texts are pinned by sha256 like every other input (fetch verifies, and caches under $CACHE)
+fetch_lic() { fetch "$1" "$CACHE/licenses/$3" sha256 "$2"; cp "$CACHE/licenses/$3" "$4"; }
+fetch_lic "$GODOT_LICENSE_URL" "$GODOT_LICENSE_SHA256" godot-LICENSE.txt "$L/godot-LICENSE.txt"
+fetch_lic "$GODOT_COPYRIGHT_URL" "$GODOT_COPYRIGHT_SHA256" godot-COPYRIGHT.txt "$L/godot-COPYRIGHT.txt"
 cp "$STAGE/python/LICENSE.txt" "$L/python-LICENSE.txt"
 for d in "$STAGE"/python/Lib/site-packages/numpy-*.dist-info "$STAGE"/python/Lib/site-packages/pillow-*.dist-info; do
   n="$(basename "$d" | sed 's/-.*//')"
@@ -123,10 +124,14 @@ for d in "$STAGE"/python/Lib/site-packages/numpy-*.dist-info "$STAGE"/python/Lib
 done
 M="$(go env GOMODCACHE)"
 cp "$M/${QUAIL_MODULE%@*}@${QUAIL_MODULE#*@}/LICENSE" "$L/quail-LICENSE.txt"
+# The module cache escapes upper-case letters in a path ("Foo" is stored as "!foo"); a dependency with no licence file
+# is reported loudly rather than silently skipped (or killing the build through a failing last `&&`).
 go version -m "$(go env GOPATH)/bin/windows_amd64/quail.exe" | awk '$1=="dep"{print $2, $3}' | while read -r mod ver; do
-  f="$(ls "$M/$mod@$ver"/LICENSE* 2>/dev/null | head -1)"; [ -n "$f" ] && cp "$f" "$L/go-dep-$(basename "$mod")-LICENSE.txt"
+  esc="$(printf '%s' "$mod" | sed -E 's/([A-Z])/!\L\1/g')"
+  f="$(ls "$M/$esc@$ver"/LICENSE* "$M/$esc@$ver"/COPYING* 2>/dev/null | head -1 || true)"
+  if [ -n "$f" ]; then cp "$f" "$L/go-dep-$(basename "$mod")-LICENSE.txt"; else echo "WARNING: no licence file found for Go dependency $mod@$ver" >&2; fi
 done
-fetch_plain "$GO_LICENSE_URL" "$L/go-LICENSE.txt"
+fetch_lic "$GO_LICENSE_URL" "$GO_LICENSE_SHA256" go-LICENSE.txt "$L/go-LICENSE.txt"
 sed "s/@VERSION@/$VER/g" "$HERE/SOURCE.txt.in" > "$L/SOURCE.txt"
 sed "s/@VERSION@/$VER/g" "$HERE/README.txt.in" > "$STAGE/README.txt"
 

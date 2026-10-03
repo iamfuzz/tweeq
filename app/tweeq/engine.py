@@ -6,6 +6,8 @@ distributes no Daybreak content. Originals are vaulted on first touch for restor
 """
 from __future__ import annotations
 
+import contextlib
+import functools
 import hashlib
 import json
 import os
@@ -18,7 +20,7 @@ from dataclasses import dataclass
 
 from .models import ModelIndex
 from . import enhance as enh
-from .paths import replace_file
+from .paths import FileLock, replace_file
 from .racedata import RaceData
 from .zonelist import ZoneList
 
@@ -73,6 +75,32 @@ class SwapError(Exception):
     pass
 
 
+class VaultBusy(SwapError):
+    pass
+
+
+def _locked(fn):
+    """Run a method that changes the manifest or the game files under the vault lock, on a freshly loaded manifest."""
+    @functools.wraps(fn)
+    def wrapper(self, *a, **k):
+        with self._exclusive():
+            return fn(self, *a, **k)
+    return wrapper
+
+
+def _unique_match(items: list[dict], decision_id: str) -> dict:
+    """The one decision whose id starts with `decision_id`. An empty or ambiguous prefix is refused, never guessed."""
+    decision_id = (decision_id or "").strip()
+    if not decision_id:
+        raise SwapError("give the id (or the start of the id) of a decision")
+    hits = [d for d in items if d["id"].startswith(decision_id)]
+    if not hits:
+        raise SwapError(f"no decision {decision_id}")
+    if len(hits) > 1:
+        raise SwapError(f"{decision_id!r} matches {len(hits)} decisions; give more of the id")
+    return hits[0]
+
+
 def norm_dir(p: str) -> str:
     """Comparable form of an install path: Windows and WSL spellings of the same folder match."""
     p = p.strip().replace("\\", "/").rstrip("/")
@@ -83,6 +111,8 @@ def norm_dir(p: str) -> str:
 
 
 class Swapper:
+    LOCK_WAIT = 3.0          # seconds to wait for another Tweeq process to let go of the vault
+
     def __init__(self, eq_dir: str, vault_dir: str, model_index: ModelIndex | None = None,
                  esrgan_dir: str | None = None):
         self.eq = eq_dir
@@ -91,7 +121,31 @@ class Swapper:
         self.esrgan_dir = esrgan_dir             # configured upscaler folder (else discovered)
         os.makedirs(os.path.join(vault_dir, "originals"), exist_ok=True)
         self.manifest_path = os.path.join(vault_dir, "manifest.json")
+        self._lock = FileLock(os.path.join(vault_dir, ".lock"))
+        self._depth = 0
         self.m = self._load()
+
+    @contextlib.contextmanager
+    def _exclusive(self):
+        """One Tweeq process at a time may change this vault or its game files (a minutes-long enhance build must not
+        have its stale view of the manifest written back over a swap the user made meanwhile). Re-entrant."""
+        if self._depth == 0:
+            if not self._lock.acquire(self.LOCK_WAIT):
+                who = self._lock.holder()
+                raise VaultBusy("another Tweeq operation is still running on this install (an enhanced model may be "
+                                "building); wait for it to finish, then try again" + (f" [{who}]" if who else ""))
+            try:
+                self.m = self._load()
+            except BaseException:
+                self._lock.release()
+                raise
+        self._depth += 1
+        try:
+            yield
+        finally:
+            self._depth -= 1
+            if self._depth == 0:
+                self._lock.release()
 
     # ---------------------------------------------------------------- manifest
     def _load(self) -> dict:
@@ -153,6 +207,7 @@ class Swapper:
     def _enhances(self) -> list[dict]:
         return [d for d in self.m["decisions"] if d.get("kind") == "enhance"]
 
+    @_locked
     def add_swap(self, race: int, model_tag: str, zones: list[str] | str,
                  genders: list[int] | None = None, height: str | None = None) -> dict:
         """`zones` is a list of zone names, or ALL_ZONES ("all") for every zone in the install."""
@@ -189,26 +244,23 @@ class Swapper:
         self._save()
         return dec
 
+    @_locked
     def remove_swap(self, decision_id: str) -> None:
-        n = [d for d in self.m["decisions"] if not d["id"].startswith(decision_id)]
-        if len(n) == len(self.m["decisions"]):
-            raise SwapError(f"no decision {decision_id}")
-        self.m["decisions"] = n
+        hit = _unique_match(self.m["decisions"], decision_id)
+        self.m["decisions"] = [d for d in self.m["decisions"] if d is not hit]
         self._save()
 
+    @_locked
     def set_all_enabled(self, enabled: bool) -> int:
         for d in self.m["decisions"]:
             d["enabled"] = enabled
         self._save()
         return len(self.m["decisions"])
 
+    @_locked
     def set_enabled(self, decision_id: str, enabled: bool) -> None:
-        for d in self.m["decisions"]:
-            if d["id"].startswith(decision_id):
-                d["enabled"] = enabled
-                self._save()
-                return
-        raise SwapError(f"no decision {decision_id}")
+        _unique_match(self.m["decisions"], decision_id)["enabled"] = enabled
+        self._save()
 
     # ---------------------------------------------------------------- rendering
     def managed_files(self) -> list[str]:
@@ -265,6 +317,7 @@ class Swapper:
         key = enh.params_hash(sha(base), params)
         return os.path.join(self.vault, "enhanced", key + ".eqg"), params
 
+    @_locked
     def add_enhance(self, tag: str, params: "enh.Params", vanilla_dir: str | None = None,
                     take_over: bool = False) -> dict:
         """Record that `tag`'s archive should be enhanced (more polygons and/or bigger textures)."""
@@ -283,18 +336,29 @@ class Swapper:
             if d["enabled"] and d["container"] == rel:
                 raise SwapError(f"{rel} is already enhanced by decision {d['id'][:8]}; remove it first")
         notes: list[str] = []
-        if self._vaulted(rel) is None:
-            live = self._live(rel)
-            if live is None:
-                raise SwapError(f"{rel} not found in the EQ install")
-            v = _read(os.path.join(vanilla_dir, rel)) if vanilla_dir else None
-            if v is not None and sha(v) != sha(live):
-                if not take_over:
-                    raise SwapError(f"{rel} in your install is not the original file (something other than "
-                                    "Tweeq changed it). Enhancing would rebuild it from your backup copy of the "
-                                    "original; confirm to continue.")
-                self._vault_put(rel, v)
-                notes.append("replaced an existing modified file with an enhanced copy of the original")
+        live = self._live(rel)
+        if live is None:
+            raise SwapError(f"{rel} not found in the EQ install")
+        vaulted = self._vaulted(rel)
+        v = _read(os.path.join(vanilla_dir, rel)) if vanilla_dir else None
+        rec = self.m["files"].get(rel)
+        known = {sha(x) for x in (vaulted, v) if x is not None}
+        if rec:
+            known.update((rec["original_sha"], rec["applied_sha"]))
+        if known and sha(live) not in known:
+            # Not the original, not our own output: a hand-made archive or a patch. Never overwrite it silently,
+            # and never again let a later Enhance skip this question just because an original is vaulted.
+            if not take_over:
+                raise SwapError(f"{rel} in your install is not the original file (something other than "
+                                "Tweeq changed it). Enhancing would replace it with an enhanced copy of the "
+                                "original; a copy of the current file is kept in the Tweeq data folder. "
+                                "Confirm to continue.")
+            keep = os.path.join(self.vault, "unmanaged", f"{rel}.{time.strftime('%Y%m%d-%H%M%S')}")
+            os.makedirs(os.path.dirname(keep), exist_ok=True)
+            _atomic_write(keep, live)
+            notes.append(f"replaced a modified file with an enhanced copy of the original (the old file is kept at {keep})")
+        if vaulted is None and v is not None:
+            self._vault_put(rel, v)
         dec = {"id": str(uuid.uuid4()), "enabled": True, "kind": "enhance",
                "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                "model_tag": tag.upper(), "container": rel, "params": params.to_dict(), "notes": notes}
@@ -373,12 +437,16 @@ class Swapper:
             reps.append(FileReport(rel, state, s))
         return reps + self._container_status()
 
+    @_locked
     def apply(self, accept_drift: bool = False, dry_run: bool = False,
-              progress=None, cancel=None, skip_drifted: bool = False) -> list[FileReport]:
+              progress=None, cancel=None, skip_drifted: bool = False, no_build: bool = False) -> list[FileReport]:
         """Write every managed file so it matches the enabled decisions.
 
         `skip_drifted` leaves files that something else changed (a patch) completely alone instead of refusing
         the whole apply; they stay `drifted` in the returned reports. (Used when uninstalling.)
+
+        `no_build` never starts an enhanced-archive build: an archive whose build is not cached yet is left alone
+        (it stays `needs-build`) so a quick action never blocks for minutes; the app builds it with progress and Cancel.
 
         Order matters: anything expensive (enhanced archives) is BUILT first, so a failed or cancelled
         build leaves the install exactly as it was."""
@@ -413,6 +481,10 @@ class Swapper:
                 continue
             path, params = self._enh_artifact(base, d)
             data = _read(path)
+            if data is None and no_build:
+                skipped.add(rel)
+                want.pop(rel, None)
+                continue
             if data is None:
                 try:
                     data, _rep = enh.build_enhanced(base, params, esrgan, progress=progress, cancel=cancel)
@@ -431,11 +503,18 @@ class Swapper:
                     raise SwapError(f"{rel} not found in the EQ install")
                 self._vault_put(rel, live)
         # 4. write
-        for rel, data in want.items():
-            orig = self._vaulted(rel)
-            _atomic_write(os.path.join(self.eq, rel), data)
-            self.m["files"][rel] = {"original_sha": sha(orig), "applied_sha": sha(data)}
-        self._save()
+        # (files written so far are recorded even if a later write fails, so the manifest stays truthful)
+        try:
+            for rel, data in want.items():
+                orig = self._vaulted(rel)
+                try:
+                    _atomic_write(os.path.join(self.eq, rel), data)
+                except PermissionError as e:
+                    raise SwapError(f"could not write {rel} ({e.strerror or e}). Is EverQuest running or the file "
+                                    "read-only? Close the game and try again; files already written are recorded")
+                self.m["files"][rel] = {"original_sha": sha(orig), "applied_sha": sha(data)}
+        finally:
+            self._save()
         return self.status()
 
     # ---------------------------------------------------------------- adopting existing edits
@@ -455,6 +534,7 @@ class Swapper:
             out.append(rel)
         return out
 
+    @_locked
     def adopt_from_vanilla(self, vanilla_dir: str) -> dict:
         """Turn edits already present in the live install into recorded swaps.
 
@@ -539,11 +619,24 @@ class Swapper:
                              "to": d["model_tag"], "zones": d["zones"], "height": d["height"]} for d in decisions],
                 "files": sorted(diffs)}
 
-    def restore_all(self) -> None:
-        """Put every managed file back to its vaulted original."""
+    @_locked
+    def restore_all(self, force: bool = False) -> dict:
+        """Put every managed file back to its vaulted original.
+
+        A file that something else changed since Tweeq last wrote it (a game patch) is NOT overwritten with the
+        older vaulted copy unless `force`; it is reported under `drifted`."""
+        restored, drifted = [], []
         for rel in list(self.m["files"]):
             orig = self._vaulted(rel)
-            if orig is not None:
-                _atomic_write(os.path.join(self.eq, rel), orig)
-                self.m["files"][rel]["applied_sha"] = sha(orig)
+            if orig is None:
+                continue
+            live = self._live(rel)
+            rec = self.m["files"][rel]
+            if live is not None and not force and sha(live) not in (rec["original_sha"], rec["applied_sha"]):
+                drifted.append(rel)
+                continue
+            _atomic_write(os.path.join(self.eq, rel), orig)
+            self.m["files"][rel]["applied_sha"] = sha(orig)
+            restored.append(rel)
         self._save()
+        return {"restored": restored, "drifted": drifted}

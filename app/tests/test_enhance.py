@@ -90,6 +90,15 @@ class Subdivide(unittest.TestCase):
             sd.subdivide_mds(mds, 1)
         self.assertEqual(len(big.faces), 20001)                           # refused BEFORE changing anything
 
+    def test_authored_normals_are_kept_so_seams_do_not_crease(self):
+        # two vertices at the same position (a UV seam) with deliberately different authored normals
+        m = tri_model()
+        m.vertices[0].normal = (1.0, 0.0, 0.0)
+        mds = mdsmod.Mds(models=[m], bones=[mdsmod.Bone("b", -1, 0, -1), mdsmod.Bone("c", 0, 0, -1)])
+        sd.subdivide_mds(mds, 1)
+        self.assertEqual(m.vertices[0].normal, (1.0, 0.0, 0.0))             # original vertex untouched
+        self.assertEqual(m.vertices[3].normal[0] > 0.5, True)                # midpoint blends parents (0 and 1)
+
     def test_check_model_catches_damage(self):
         m = tri_model()
         m.faces[0].indices = (0, 1, 9)
@@ -119,6 +128,18 @@ class Textures(unittest.TestCase):
             self.assertEqual(et.dds_has_mips(d), mips)
             self.assertEqual(list(et.read_dds(d).getdata()), list(im.getdata()))
         self.assertEqual(len(et.write_dds(im, "RGBA32", False)), 128 + 128 * 128 * 4)
+
+    def test_bleed_only_fills_fully_transparent_texels(self):
+        rgb = np.zeros((8, 8, 3), np.uint8)
+        rgb[...] = (200, 40, 40)
+        rgb[4, 4] = (10, 250, 10)                  # a semi-transparent texel with its own real colour
+        rgb[0, 0] = (0, 0, 0)                      # a fully transparent one (garbage colour)
+        alpha = np.full((8, 8), 255, np.uint8)
+        alpha[4, 4], alpha[0, 0] = 120, 0
+        im = Image.fromarray(np.dstack([rgb, alpha]), "RGBA")
+        out = et.bleed(np.asarray(im)[..., :3], np.asarray(im)[..., 3] > 0)
+        self.assertEqual(tuple(out[4, 4]), (10, 250, 10))                   # colour kept
+        self.assertEqual(tuple(out[0, 0]), (200, 40, 40))                   # hole filled from neighbours
 
     def test_dxt_is_reencoded_as_dxt(self):
         im = gradient()
@@ -361,6 +382,37 @@ class EngineLifecycle(unittest.TestCase):
         self.assertEqual(E.plan(self.cth, E.Params(1, 0), None)["models"][0]["verts_before"], 7754)
         sw.restore_all()
         self.assertEqual(rd_(self.cth), self.vanilla)
+
+    def test_cached_builds_from_an_older_pipeline_are_not_reused(self):
+        p = E.Params(1, 512, "lanczos")
+        old = E.PIPELINE_VERSION
+        a = E.params_hash("abc", p)
+        try:
+            E.PIPELINE_VERSION = old + 1
+            self.assertNotEqual(a, E.params_hash("abc", p))
+        finally:
+            E.PIPELINE_VERSION = old
+
+    def test_take_over_keeps_a_copy_and_a_later_enhance_cannot_skip_the_question(self):
+        modified, _ = E.build_enhanced(self.vanilla, E.Params(0, 1024, "lanczos"), None, QUAIL)
+        wr_(self.cth, modified)
+        sw = self.sw()
+        dec = sw.add_enhance("cth", self.P, vanilla_dir=self.van, take_over=True)
+        kept = os.path.join(self.vault, "unmanaged")
+        saved = [os.path.join(r, f) for r, _d, fs in os.walk(kept) for f in fs]
+        self.assertEqual([rd_(x) for x in saved], [modified])                # the hand-made file is not lost
+        sw.remove_swap(dec["id"])                                            # build cancelled: decision gone, live untouched
+        self.assertEqual(rd_(self.cth), modified)
+        with self.assertRaises(SwapError):                                   # vanilla is vaulted now, but still asks
+            self.sw().add_enhance("cth", self.P, vanilla_dir=self.van)
+
+    def test_no_build_leaves_an_unbuilt_archive_alone(self):
+        sw = self.sw()
+        sw.add_enhance("cth", self.P)
+        reps = sw.apply(no_build=True)
+        self.assertEqual({r.path: r.state for r in reps}["cth.eqg"], "needs-build")
+        self.assertEqual(rd_(self.cth), self.vanilla)
+        self.assertEqual(os.listdir(os.path.join(self.vault, "enhanced")) if os.path.isdir(os.path.join(self.vault, "enhanced")) else [], [])
 
     def test_swap_and_enhance_coexist(self):
         sw = self.sw()
