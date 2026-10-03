@@ -1,0 +1,11 @@
+{
+  "_comment": "Models that are OBJECTS, not characters. The swapper hides them everywhere (model list, NPC lists, race list). Edit freely; the user's own additions go in <vault>/model_kinds.json as {\"objects\": [...], \"characters\": [...]} ('characters' rescues a tag from these rules).",
+  "object_patterns": ["^i\\d\\d$", "^t\\d\\d$", "^dest_", "^it\\d+$", "^g\\d\\d$"],
+  "object_formats": ["wld_static"],
+  "object_tags": [
+    "bnx", "cak", "c20", "gfc", "b09", "b10", "flg", "chs", "cst", "och", "box", "brl", "cpt", "vas",
+    "rak", "tbl", "btp", "prt", "gsp", "ghostship", "shp", "minipom200", "crs", "crl", "rkp", "lvr",
+    "fgp", "dbx", "dbp", "drc", "mes", "seg", "cnp", "rob", "map", "mst", "orb", "mhb", "mrk",
+    "ivm", "tpn", "gnome_wave", "stnd_gnome_wave", "mpu_bak"
+  ]
+}

@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.godot/
+app/sandbox/
+# Never commit game files or third-party data dumps
+*.s3d
+*.eqg
+*.dds
+*.glb
+*.sqlite
+data/*
+!data/model_kinds.json
