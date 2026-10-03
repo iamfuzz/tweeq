@@ -12,7 +12,7 @@ The engine (`app/tweeq`, Python, JSON CLI) and the Godot 4 UI (`app/ui`) work, a
 Running from source (rather than the installer) still assumes the author's WSL + Windows setup in a few scripts.
 
 ## Install (Windows 10/11)
-1. Download `Tweeq-Setup-<version>.exe` from the [Releases](https://github.com/iamfuzz/tweeq/releases) page.
+1. Download [`Tweeq-Setup-0.1.1.exe`](https://github.com/iamfuzz/tweeq/releases/download/v0.1.1/Tweeq-Setup-0.1.1.exe) (latest: [release notes](https://github.com/iamfuzz/tweeq/releases/latest); all versions on the [Releases](https://github.com/iamfuzz/tweeq/releases) page).
 2. Double-click it and click **Install**. No administrator rights are needed.
 3. Start Tweeq from the new desktop icon. The first time, it finds your EverQuest folder and reads your model files
    (a few minutes; it repeats only after a game patch).
