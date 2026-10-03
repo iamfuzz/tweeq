@@ -7,6 +7,6 @@ app/sandbox/
 *.eqg
 *.dds
 *.glb
-*.sqlite
 data/*
 !data/model_kinds.json
+!data/peq_slim.sqlite

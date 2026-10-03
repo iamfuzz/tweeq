@@ -22,8 +22,9 @@ See `app/README.md` for the engine, CLI and tests.
 - An EverQuest install
 
 ## Data
-Zone/NPC lists come from an EQEmu/PEQ database dump (GPL), which is **not** included. Build the slim table yourself with
-`tools/peq_load.py`; everything else works without it.
+`data/peq_slim.sqlite` is a slimmed extract (zones, NPC types, spawns) of the ProjectEQ/EQEmu database, distributed under
+the GPL along with the rest of this project. It powers the zone -> NPC lists. Rebuild or refresh it from a PEQ dump
+with `tools/peq_load.py`.
 
 ## License
 GPL-3.0-or-later — see `LICENSE`. Third-party components: `THIRD_PARTY_LICENSES.md`.
