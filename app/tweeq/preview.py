@@ -1,7 +1,7 @@
 """On-demand model previews: model tag -> cached .glb the Godot viewer can load.
 
 Dev implementation shells out to tools/mds_to_gltf.py (EQG) and tools/wce_chr_to_gltf.py (WLD,
-needs the `quail` binary). A packaged build replaces `TOOLS` with the frozen tweeq.
+needs the `quail` binary). The installed build runs the same scripts with its bundled Python.
 Cache key = tag + source container size/mtime, so a patch that changes the model regenerates it.
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ import time
 
 from .models import ModelIndex
 
-TOOLS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tools")
+from .paths import NO_WINDOW, TOOLS
 TIMEOUT = 180
 # Bump when the converters change so stale cached previews are rebuilt.
 # v2: classic .bmp texture support in wce_chr_to_gltf.py
@@ -38,7 +38,7 @@ def _pick(eq_dir: str, cands: list[dict]) -> dict | None:
 
 def _run(cmd: list[str]) -> tuple[bool, str]:
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT, creationflags=NO_WINDOW)
     except subprocess.TimeoutExpired:
         return False, f"timed out after {TIMEOUT}s"
     return r.returncode == 0, (r.stderr or r.stdout)[-400:]

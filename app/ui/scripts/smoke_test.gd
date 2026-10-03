@@ -44,9 +44,18 @@ func _run() -> void:
 	backend.cfg.mode = "sandbox"
 	backend.cfg.eq = backend.cfg.sandbox_eq
 	backend.cfg.vault = backend.cfg.sandbox_vault
-	check(str(backend.cfg.eq).contains("sandbox"), "test is pinned to the sandbox, not the real install")
-	check(backend.to_engine_path("C:\\Users\\Public\\Daybreak Game Company\\X") == "/mnt/c/Users/Public/Daybreak Game Company/X", "Windows paths are converted for the WSL launcher")
-	check(backend.to_engine_path("/mnt/c/already/ok") == "/mnt/c/already/ok", "WSL paths pass through unchanged")
+	if backend.packaged:   # the exported build under test: models/index come from the environment, never the real vault
+		backend.cfg.models = OS.get_environment("TWEEQ_MODELS")
+		backend.cfg.index = OS.get_environment("TWEEQ_INDEX")
+		print("INFO  eq=%s models=%s index=%s vault=%s" % [backend.cfg.eq, backend.cfg.models, backend.cfg.index, backend.cfg.vault])
+		check(str(backend.cfg.exe).ends_with("python.exe"), "installed build runs the bundled python: " + str(backend.cfg.exe))
+		check(str(backend.cfg.index) != "" and FileAccess.file_exists(str(backend.cfg.index)), "the test was given a model index: " + str(backend.cfg.index))
+		check(not str(backend.cfg.exe).contains("wsl"), "installed build does not use WSL")
+		check(backend.to_engine_path("C:\\x\\y") == "C:\\x\\y", "installed build passes Windows paths through unchanged")
+	check(str(backend.cfg.eq).contains("sandbox") or backend.packaged, "test is pinned to the sandbox, not the real install")
+	if not backend.packaged:
+		check(backend.to_engine_path("C:\\Users\\Public\\Daybreak Game Company\\X") == "/mnt/c/Users/Public/Daybreak Game Company/X", "Windows paths are converted for the WSL launcher")
+		check(backend.to_engine_path("/mnt/c/already/ok") == "/mnt/c/already/ok", "WSL paths pass through unchanged")
 	var r: Dictionary = backend.call_cli(["info"])
 	check(r.get("ok", false), "engine reachable through wsl.exe (info)")
 	if not r.get("ok", false):

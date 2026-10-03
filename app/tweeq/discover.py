@@ -14,6 +14,8 @@ import re
 import string
 import subprocess
 
+from .paths import NO_WINDOW
+
 REQUIRED = ("eqgame.exe", "racedata.txt")
 UNINSTALL_KEYS = [r"HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\EverQuest",
                   r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\EverQuest"]
@@ -24,6 +26,7 @@ STANDARD = ["Users/Public/Daybreak Game Company/Installed Games",
             "Program Files (x86)/Sony/EverQuest", "Program Files (x86)/Sony Online Entertainment/Installed Games",
             "Program Files (x86)/Steam/steamapps/common", "SteamLibrary/steamapps/common", "Games", "EQ"]
 _WIN_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
+_WSL_DRIVE = re.compile(r"^/mnt/([A-Za-z])/(.*)$")
 
 
 def missing_files(path: str) -> list[str]:
@@ -44,6 +47,9 @@ def to_native(p: str) -> str:
     p = p.strip().strip('"')
     if os.name != "nt" and _WIN_DRIVE.match(p):
         return "/mnt/%s/%s" % (p[0].lower(), p[3:].replace("\\", "/"))
+    m = _WSL_DRIVE.match(p)
+    if os.name == "nt" and m:                    # a manifest written by the WSL dev build: /mnt/c/x -> C:\x
+        return "%s:\\%s" % (m.group(1).upper(), m.group(2).replace("/", "\\"))
     return p
 
 
@@ -87,7 +93,7 @@ def _registry() -> list[str]:
                         except OSError:
                             pass
             else:
-                r = subprocess.run(["reg.exe", "query", key], capture_output=True, text=True, timeout=15)
+                r = subprocess.run(["reg.exe", "query", key], capture_output=True, text=True, timeout=15, creationflags=NO_WINDOW)
                 if r.returncode == 0:
                     found += parse_reg_output(r.stdout)
         except (OSError, subprocess.SubprocessError, ImportError):
@@ -99,7 +105,7 @@ def _running_client() -> list[str]:
     try:
         cmd = ["powershell.exe", "-NoProfile", "-Command",
                "(Get-Process eqgame -ErrorAction SilentlyContinue | Select-Object -First 1).Path"]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=20, creationflags=NO_WINDOW)
         p = r.stdout.strip()
         return [os.path.dirname(to_native(p)) if os.name != "nt" else os.path.dirname(p)] if p else []
     except (OSError, subprocess.SubprocessError):
@@ -147,5 +153,6 @@ def discover(*, extra_roots: list[str] | None = None, drive_list: list[str] | No
         if key in seen or not is_eq_dir(path):
             continue
         seen.add(key)
+        path = os.path.normpath(path)             # one separator style (the standard-location list uses "/")
         out.append({"path": path, "display": to_display(path), "source": source})
     return out

@@ -4,6 +4,9 @@ config_version=5
 [application]
 
 config/name="Tweeq"
+config/version="0.0.0-dev"
+config/icon="res://icon.png"
+config/windows_native_icon="res://icon.ico"
 config/use_custom_user_dir=true
 config/custom_user_dir_name="Tweeq"
 run/main_scene="res://scenes/main.tscn"

@@ -251,9 +251,15 @@ class TestAgainstRealFiles(unittest.TestCase):
             d = sw.add_swap(95, "cth", ["potimeb"], height="6")
             self.assertEqual(d["list_archive"], "cth")
             sw.apply()
+            live_has_edit = any(rd_(os.path.join(LIVE, f)) != rd_(os.path.join(VANILLA, f))
+                                for f in ("racedata.txt", "potimeb_chr.txt"))
             for f in ("racedata.txt", "potimeb_chr.txt"):
-                a, b = rd_(os.path.join(eq, f)), rd_(os.path.join(LIVE, f))
-                self.assertEqual(sha(a), sha(b), f"{f} differs from the hand-applied live edit")
+                a = rd_(os.path.join(eq, f))
+                if live_has_edit:        # the install still carries the hand-applied edit: must match it exactly
+                    self.assertEqual(sha(a), sha(rd_(os.path.join(LIVE, f))), f"{f} differs from the hand-applied live edit")
+                else:                    # the install is vanilla again: the replay must at least change the file
+                    self.assertNotEqual(a, rd_(os.path.join(VANILLA, f)), f"{f} was not changed by the swap")
+            self.assertIn(b"cth,cth", rd_(os.path.join(eq, "potimeb_chr.txt")))
             sw.restore_all()
             for f in ("racedata.txt", "potimeb_chr.txt"):
                 self.assertEqual(rd_(os.path.join(eq, f)), rd_(os.path.join(VANILLA, f)))
@@ -268,3 +274,32 @@ class TestAgainstRealFiles(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestReplaceFile(unittest.TestCase):
+    """Windows can refuse os.replace for a moment (antivirus/indexer) or because the target is read-only."""
+
+    def test_retries_until_it_works_and_gives_up_loudly(self):
+        from unittest import mock
+        from tweeq.paths import replace_file
+        tmp = tempfile.mkdtemp()
+        try:
+            a, b = os.path.join(tmp, "a"), os.path.join(tmp, "b")
+            wr_(a, b"new"); wr_(b, b"old")
+            real, n = os.replace, {"n": 0}
+
+            def flaky(x, y):
+                n["n"] += 1
+                if n["n"] < 4:
+                    raise PermissionError("access denied")
+                return real(x, y)
+            with mock.patch("os.replace", side_effect=flaky), mock.patch("time.sleep"):
+                replace_file(a, b)
+            self.assertEqual(rd_(b), b"new")
+            wr_(a, b"again")
+            with mock.patch("os.replace", side_effect=PermissionError("locked for good")), mock.patch("time.sleep"):
+                with self.assertRaises(PermissionError):
+                    replace_file(a, b, attempts=3)
+            self.assertEqual(rd_(b), b"new")                  # nothing half-written
+        finally:
+            shutil.rmtree(tmp)

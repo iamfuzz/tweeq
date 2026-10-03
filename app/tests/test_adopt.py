@@ -118,16 +118,23 @@ class TestAdopt(AdoptBase):
         code, r = call("apply"); self.assertEqual(code, 0)
 
 
-@unittest.skipUnless(os.path.exists(os.path.join(VANILLA, "racedata.txt")) and os.path.exists(os.path.join(LIVE, "racedata.txt"))
-                     and os.path.exists(REPO_INDEX), "real install / vanilla backups not available")
+@unittest.skipUnless(os.path.exists(os.path.join(VANILLA, "racedata.txt")) and os.path.exists(os.path.join(VANILLA, "potimeb_chr.txt"))
+                     and os.path.exists(REPO_INDEX), "vanilla backups / dev index not available")
 class TestAdoptRealInstall(unittest.TestCase):
+    """Adopt a hand-applied PoTime Cazic edit made on the real vanilla files. The edited install is rebuilt here
+    (vanilla files + the swap replayed by a throw-away vault) so the test does not depend on what is live."""
+
     def test_adopts_the_real_potimeb_cazic_edit_into_a_scratch_copy(self):
         tmp = tempfile.mkdtemp()
         try:
             eq = os.path.join(tmp, "EQ"); os.makedirs(os.path.join(eq, "Resources"))
             for f in ("racedata.txt", "potimeb_chr.txt", "gfaydark_chr.txt"):
-                shutil.copy(os.path.join(LIVE, f), os.path.join(eq, f))           # the LIVE (edited) files
+                src = os.path.join(VANILLA, f)
+                shutil.copy(src if os.path.exists(src) else os.path.join(LIVE, f), os.path.join(eq, f))
             shutil.copy(os.path.join(VANILLA, "GlobalLoad.txt"), os.path.join(eq, "Resources", "GlobalLoad.txt"))
+            maker = Swapper(eq, os.path.join(tmp, "maker_vault"), ModelIndex(REPO_INDEX, eq))
+            maker.add_swap(95, "cth", ["potimeb"], height="6")
+            maker.apply()                                  # now the files carry the edit, with no vault of ours
             sw = Swapper(eq, os.path.join(tmp, "vault"), ModelIndex(REPO_INDEX, eq))
             r = sw.adopt_from_vanilla(VANILLA)
             self.assertEqual(r["adopted"], [{"race": 95, "from": "CAZ", "to": "CTH", "zones": ["potimeb"], "height": "6"}])

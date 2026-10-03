@@ -1,0 +1,24 @@
+Tweeq @VERSION@
+================
+
+Tweeq swaps which 3D model an EverQuest race uses, and can enhance EQG models (more polygons,
+bigger textures). Everything it changes is reversible: it keeps your original files.
+
+  * Start it from the Tweeq icon on your desktop or in the Start Menu.
+  * The first time, Tweeq looks for your EverQuest folder and reads your model files
+    (a few minutes; it repeats only after a game patch).
+  * Restart EverQuest completely to see changes (the game keeps models cached until it exits).
+
+If Windows says "Windows protected your PC" when you run the installer: Tweeq is free, open
+source software and the installer is not signed with a paid certificate yet. Click "More info",
+then "Run anyway". You can check the download against the SHA-256 shown on the release page.
+
+Uninstalling: Tweeq offers to put your EverQuest files back to their originals first.
+Your settings and the saved originals live in  %APPDATA%\Tweeq  and are kept unless you tell
+the uninstaller to delete them.
+
+Tweeq is not affiliated with or endorsed by Daybreak Game Company. EverQuest is a trademark of
+Daybreak Game Company LLC. Tweeq contains no EverQuest game files.
+
+Free software under the GNU General Public License v3 (see licenses\LICENSE-GPL-3.0.txt).
+Source code: https://github.com/iamfuzz/tweeq   (see licenses\SOURCE.txt)

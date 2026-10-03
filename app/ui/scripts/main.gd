@@ -36,7 +36,7 @@ Refresh reloads everything. Find EverQuest searches for your EverQuest folder; y
 Click a model in the list, then use the [b]Enhance model B[/b] box on the right. [b]Polygons[/b] splits every triangle of the model, so curves look smoother (1 pass = 4x the triangles, 2 passes = 16x). [b]Textures[/b] makes the model's pictures larger (512 or 1024 pixels). The box tells you what the result will be before you start. [b]Preview in B[/b] builds the enhanced model and shows it in pane B so you can compare it with the original; nothing in your game changes. [b]Enhance[/b] builds it and puts it in your EverQuest folder, and it appears in the Recorded swaps list as [b]enhance[/b]; Disable or Remove it there to get the original model file back.
 Only EQG models (Luclin and later, such as Cazic-Thule) can be enhanced for now; classic models cannot. Enhancing changes the model's file, so it applies to every NPC that uses that model.
 [b]AI upscaler.[/b] For the sharpest textures Tweeq can use the free Real-ESRGAN upscaler. It is optional: press [b]Get AI upscaler[/b] to download it (about 45 MB, checked before it is installed). Without it Tweeq uses a built-in resize, which is faster but less detailed. The upscaler needs a Vulkan-capable graphics card. [b]Remove AI upscaler[/b] deletes it again.
-After a game patch replaces an enhanced model's file, the app notices; use the red message's button to rebuild it on top of the new file.
+After a game patch replaces an enhanced model's file, the app notices and shows a red message; its [b]Re-apply swaps to patched files[/b] button rebuilds the enhancement on top of the new file. If an enhanced model is wanted but has not been built yet (for example after you install the AI upscaler), a yellow message appears with a [b]Build enhanced models[/b] button; building can take a few minutes and has a Cancel button.
 
 [b]Limits[/b]
 Without Enhance, the app only changes which model a race uses; it does not change meshes or textures inside a model file.
@@ -86,6 +86,9 @@ var enhance_panel  # scripts/enhance_panel.gd (untyped: it depends on the Backen
 var build_btn: Button
 var pane_b_enhanced := ""  # tag whose ENHANCED preview pane B is showing (keep it until another model is picked)
 var needs_build: Array = []
+var scan_note := ""  # shown in the banner when the model list is missing or may be out of date
+var scan_overlay  # scripts/scan_overlay.gd
+var rescan_btn: Button
 var model_info := {}  # tag -> entry from the engine's model list
 
 
@@ -93,11 +96,12 @@ func _ready() -> void:
 	_build()
 	Backend.preview_ready.connect(_on_preview_ready)
 	Backend.cli_done.connect(_on_cli_done)
+	get_window().title = ("Tweeq %s" % str(ProjectSettings.get_setting("application/config/version", ""))).strip_edges()
 	if Backend.first_run:
 		status_label.text = "first launch: looking for your EverQuest folder ..."
 		_discover()
 	else:
-		refresh_all()
+		_ensure_scan()
 
 
 # ------------------------------------------------------------------ UI construction
@@ -117,8 +121,12 @@ func _build() -> void:
 	eq_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	eq_edit.text_submitted.connect(_on_path_typed)
 	top.add_child(eq_edit)
+	top.add_child(_btn("Browse...", _browse_for_eq))
 	top.add_child(_btn("Refresh", refresh_all))
 	top.add_child(_btn("Find EverQuest", _discover))
+	rescan_btn = _btn("Rescan models", _start_scan)
+	rescan_btn.visible = Backend.packaged
+	top.add_child(rescan_btn)
 	top.add_child(_btn("Help", _show_help))
 	adopt_btn = _btn("Adopt existing edits", _on_adopt)
 	adopt_btn.visible = false
@@ -286,6 +294,9 @@ func _build() -> void:
 	launch_btn = _btn("Launch EverQuest", _launch_eq)
 	launch_btn.custom_minimum_size = Vector2(220, 38)
 	bottom.add_child(launch_btn)
+	scan_overlay = load("res://scripts/scan_overlay.gd").new()
+	scan_overlay.finished.connect(_on_scan_finished)
+	add_child(scan_overlay)
 
 
 ## "Cazic-Thule (new)  [cth]" for a model tag.
@@ -344,7 +355,11 @@ func _call(args: Array) -> Variant:
 
 
 func refresh_all() -> void:
-	Backend.cfg.eq = eq_edit.text.strip_edges()
+	if not Backend.packaged:
+		Backend.cfg.eq = eq_edit.text.strip_edges()
+	if str(Backend.cfg.eq) == "":
+		status_label.text = "choose your EverQuest folder (Find EverQuest or Browse...)"
+		return
 	var info = _call(["info"])
 	if info == null:
 		status_label.text = "engine not reachable / bad folder"
@@ -378,7 +393,7 @@ func _update_banner() -> void:
 	drift_btn.visible = unmanaged.is_empty() and not drifted.is_empty()
 	build_btn.visible = unmanaged.is_empty() and drifted.is_empty() and not needs_build.is_empty()
 	enhance_panel.set_blocked("" if unmanaged.is_empty() else "Adopt the existing edits first (button at the top).")
-	mode_label.visible = not unmanaged.is_empty() or not drifted.is_empty() or not needs_build.is_empty()
+	mode_label.visible = not unmanaged.is_empty() or not drifted.is_empty() or not needs_build.is_empty() or scan_note != ""
 	if not unmanaged.is_empty():
 		mode_label.text = "%d edited file(s) are not tracked yet (%s). Click 'Adopt existing edits' before swapping anything." % [
 				unmanaged.size(), ", ".join(unmanaged)]
@@ -386,6 +401,9 @@ func _update_banner() -> void:
 	elif not drifted.is_empty():
 		mode_label.text = "A game patch or another tool changed %s. Your swaps are not on top of the new version yet: click 'Re-apply swaps to patched files'." % ", ".join(drifted)
 		mode_label.modulate = Color(1.0, 0.45, 0.45)
+	elif scan_note != "":
+		mode_label.text = scan_note
+		mode_label.modulate = Color(1.0, 0.85, 0.5)
 	elif not needs_build.is_empty():
 		mode_label.text = "%s still needs to be built. Click 'Build enhanced models' (it can take a few minutes)." % ", ".join(needs_build)
 		mode_label.modulate = Color(1.0, 0.85, 0.5)
@@ -745,22 +763,66 @@ func _choose_install(cands: Array) -> void:
 	dlg.popup_centered()
 
 
-## Make `path` the install the app manages: own vault per install, vanilla-edit guard only for the
-## original install (the vanilla backups belong to it).
+## Make `path` the install the app manages: its own vault, and (installed app) its own model scan.
 func _use_install(path: String, source: String) -> void:
-	var enginep: String = Backend.to_engine_path(path)
+	Backend.set_install(path)
 	Backend.cfg.mode = "real"
-	Backend.cfg.eq = enginep
-	Backend.cfg.real_eq = enginep
-	Backend.cfg.vault = Backend.vault_for(enginep)
-	Backend.cfg.models = enginep
-	if not Backend.is_default_install(enginep):
+	if not Backend.packaged and not Backend.is_default_install(str(Backend.cfg.eq)):
 		Backend.cfg.vanilla = ""
 	Backend.first_run = false
 	Backend.save_config()
-	eq_edit.text = enginep
-	log_line("Using EverQuest folder: %s  (found via %s)" % [enginep, source])
-	refresh_all()
+	eq_edit.text = Backend.to_windows_path(str(Backend.cfg.eq)) if Backend.packaged else str(Backend.cfg.eq)
+	log_line("Using EverQuest folder: %s  (found via %s)" % [eq_edit.text, source])
+	_ensure_scan()
+
+
+## Look at the model files once (and again only after the game changes): builds the model list for this install.
+func _ensure_scan() -> void:
+	if not Backend.packaged or str(Backend.cfg.eq) == "" or OS.get_environment("TWEEQ_SKIP_SCAN") == "1":
+		refresh_all()
+		return
+	var st = _call(["scan-status"])
+	if st != null and bool(st.fresh):
+		scan_note = ""
+		refresh_all()
+		return
+	_start_scan()
+
+
+func _start_scan() -> void:
+	scan_note = ""
+	status_label.text = "reading your model files ..."
+	scan_overlay.start()
+
+
+func _on_scan_finished(ok: bool, message: String) -> void:
+	if ok:
+		scan_note = ""
+		log_line(message)
+		refresh_all()
+		return
+	log_line("model scan: " + message, true)
+	if FileAccess.file_exists(str(Backend.cfg.index)):
+		scan_note = "The model list may be out of date after a game patch. Click 'Rescan models'."
+		refresh_all()
+	else:
+		scan_note = "Tweeq needs a one-time scan of your EverQuest files before it can list models. Click 'Rescan models'."
+		status_label.text = "model scan needed"
+		_update_banner()
+
+
+func _browse_for_eq() -> void:
+	var fd := FileDialog.new()
+	fd.access = FileDialog.ACCESS_FILESYSTEM
+	fd.file_mode = FileDialog.FILE_MODE_OPEN_DIR
+	fd.title = "Choose your EverQuest folder (the one with eqgame.exe)"
+	fd.dir_selected.connect(func(d: String) -> void:
+		eq_edit.text = d
+		_on_path_typed(d)
+		fd.queue_free())
+	fd.canceled.connect(func() -> void: fd.queue_free())
+	add_child(fd)
+	fd.popup_centered(Vector2i(820, 540))
 
 
 func _on_path_typed(t: String) -> void:

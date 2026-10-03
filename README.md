@@ -8,8 +8,20 @@ originals are vaulted on first touch and `apply` replays your swaps onto the cur
 > Tweeq contains no game files. It reads and edits the copy of EverQuest you already have installed.
 
 ## Status
-Early. The engine (`app/tweeq`, Python, JSON CLI) and the Godot 4 UI (`app/ui`) work, but some paths in the scripts
-are still hardcoded to the author's machine (WSL + Windows) and there is no packaged release yet.
+The engine (`app/tweeq`, Python, JSON CLI) and the Godot 4 UI (`app/ui`) work, and there is a one-file Windows installer.
+Running from source (rather than the installer) still assumes the author's WSL + Windows setup in a few scripts.
+
+## Install (Windows 10/11)
+1. Download `Tweeq-Setup-<version>.exe` from the [Releases](https://github.com/iamfuzz/tweeq/releases) page.
+2. Double-click it and click **Install**. No administrator rights are needed.
+3. Start Tweeq from the new desktop icon. The first time, it finds your EverQuest folder and reads your model files
+   (a few minutes; it repeats only after a game patch).
+
+The installer is not signed with a paid certificate yet, so Windows may say "Windows protected your PC": click
+**More info**, then **Run anyway**. Compare the download's SHA-256 with the one on the release page if you want to be sure.
+Uninstalling offers to put your EverQuest files back to their originals first.
+
+To build the installer yourself (Windows with WSL2): `release/build_release.sh`, then `release/verify_release.sh`.
 
 ## Enhance
 Pick any EQG model (Luclin and later, e.g. Cazic-Thule) and make it look better: **more polygons** (every triangle split

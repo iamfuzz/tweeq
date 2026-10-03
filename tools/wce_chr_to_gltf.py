@@ -1226,14 +1226,16 @@ def build_animations(model, locals_, builder, conj, opts, log):
 # ==========================================================================
 
 def quail_convert(s3d_path, out_dir, log):
-    quail = os.path.expanduser("~/go/bin/quail")
-    if not os.path.isfile(quail):
-        quail = shutil.which("quail") or quail
-    if not os.path.isfile(quail):
-        raise SystemExit("quail not found (looked for ~/go/bin/quail)")
+    here = os.path.dirname(os.path.abspath(__file__))
+    cands = [os.environ.get("TWEEQ_QUAIL"), os.path.join(here, "..", "bin", "quail.exe"),
+             os.path.join(here, "..", "bin", "quail"), os.path.expanduser("~/go/bin/quail"), shutil.which("quail")]
+    quail = next((c for c in cands if c and os.path.isfile(c)), None)
+    if not quail:
+        raise SystemExit("quail not found (set TWEEQ_QUAIL, or install it as bin/quail.exe or ~/go/bin/quail)")
     log("  quail convert %s -> %s" % (os.path.basename(s3d_path), out_dir))
     r = subprocess.run([quail, "convert", s3d_path, out_dir],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if r.returncode != 0:
         raise SystemExit("quail failed:\n%s\n%s" % (r.stdout, r.stderr))
     return out_dir

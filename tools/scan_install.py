@@ -22,7 +22,7 @@ import time
 from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from s3d import load  # noqa: E402
+from s3d import list_members, load  # noqa: E402
 
 HASH_KEY = bytes([0x95, 0x3A, 0xC5, 0x2A, 0x95, 0x7A, 0x95, 0x6A])
 
@@ -76,29 +76,32 @@ def scan_wld(name, data, container):
     return out
 
 
-def scan_eqg(path, container):
-    """Character models in an .eqg.
+def scan_eqg_members(members, container):
+    """Character models in an .eqg, from its member listing {name: uncompressed size} (nothing is decompressed).
 
     `.mds` is a skinned model. `.mod` is also used for static zone props (101k of them), so a
     `.mod` counts as a character model ONLY when the container carries animations (`.ani`)
     and the `.mod` is the container's own model (stem == container stem, e.g. bat.eqg/bat.mod).
     """
     out, others = [], Counter()
-    members = load(path)
     cstem = os.path.splitext(container)[0].lower()
     has_ani = any(k.lower().endswith(".ani") for k in members)
-    for member, data in members.items():
+    for member, size in members.items():
         ext = member.rsplit(".", 1)[-1].lower() if "." in member else ""
         stem = member.rsplit(".", 1)[0].lower()
         if ext == "mds":
             out.append({"tag": stem, "format": "eqg_mds", "container": container,
-                        "member": member, "bytes": len(data)})
+                        "member": member, "bytes": size})
         elif ext == "mod" and has_ani and stem == cstem:
             out.append({"tag": stem, "format": "eqg_mod", "container": container,
-                        "member": member, "bytes": len(data)})
+                        "member": member, "bytes": size})
         else:
             others[ext] += 1
     return out, others
+
+
+def scan_eqg(path, container):
+    return scan_eqg_members(list_members(path), container)
 
 
 def main(eq_dir, out_path):

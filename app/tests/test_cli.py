@@ -116,3 +116,121 @@ class TestCliJson(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestUninstallRestore(unittest.TestCase):
+    """`uninstall-restore --data-root`: put the game files back from every vault, never touch a patched file."""
+
+    def setUp(self):
+        from unittest import mock
+        from tweeq.engine import Swapper
+        from tweeq.models import ModelIndex
+        self.tmp = tempfile.mkdtemp()
+        self.eq = os.path.join(self.tmp, "EQ")
+        self.data = os.path.join(self.tmp, "AppData")
+        self.vault = os.path.join(self.data, "vault")
+        make_install(self.eq)
+        self.idx = os.path.join(self.tmp, "idx.json")
+        make_index(self.idx)
+        self.orig = {f: self.read(f) for f in ("racedata.txt", "potimeb_chr.txt")}
+        sw = Swapper(self.eq, self.vault, ModelIndex(self.idx, self.eq))
+        sw.add_swap(95, "cth", ["potimeb"], height="6")
+        sw.apply()
+        self.assertNotEqual(self.read("racedata.txt"), self.orig["racedata.txt"])
+        self.running = mock.patch("tweeq.uninstall._running_client", return_value=[])
+        self.running.start()
+
+    def tearDown(self):
+        self.running.stop()
+        shutil.rmtree(self.tmp)
+
+    def read(self, f):
+        with open(os.path.join(self.eq, f), "rb") as fh:
+            return fh.read()
+
+    def call(self):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = cli.main(["--json", "uninstall-restore", "--data-root", self.data])
+        return code, json.loads(out.getvalue())
+
+    def test_restores_everything_and_keeps_the_vault(self):
+        code, r = self.call()
+        self.assertEqual(code, 0, r)
+        for f, b in self.orig.items():
+            self.assertEqual(self.read(f), b, f)
+        self.assertEqual(r["data"]["drifted"], [])
+        self.assertEqual(sorted(r["data"]["restored"][0]["files"]), ["potimeb_chr.txt", "racedata.txt"])
+        self.assertTrue(os.path.exists(os.path.join(self.vault, "manifest.json")))      # never deleted
+        self.assertTrue(os.path.exists(os.path.join(self.vault, "originals", "racedata.txt")))
+        code, r = self.call()                                                           # idempotent
+        self.assertEqual(code, 0, r)
+
+    def test_a_patched_file_is_left_alone_and_reported_but_the_rest_is_restored(self):
+        patched = b"2\r\nwrb,wrb_chr\r\nbrand,new_patch_line\r\n"
+        with open(os.path.join(self.eq, "potimeb_chr.txt"), "wb") as f:
+            f.write(patched)
+        code, r = self.call()
+        self.assertEqual(code, 3, r)
+        self.assertEqual(r["data"]["drifted"], ["potimeb_chr.txt"])
+        self.assertEqual(self.read("potimeb_chr.txt"), patched)                          # not overwritten
+        self.assertEqual(self.read("racedata.txt"), self.orig["racedata.txt"])          # the safe file was restored
+
+    def test_refuses_while_everquest_runs(self):
+        from unittest import mock
+        with mock.patch("tweeq.uninstall._running_client", return_value=[self.eq]):
+            code, r = self.call()
+        self.assertEqual(code, 4)
+        self.assertIn("close", r["error"].lower())
+        self.assertNotEqual(self.read("racedata.txt"), self.orig["racedata.txt"])       # nothing changed
+
+    def test_a_vanished_install_is_skipped_and_no_vaults_is_fine(self):
+        shutil.rmtree(self.eq)
+        code, r = self.call()
+        self.assertEqual(code, 0, r)
+        self.assertEqual(r["data"]["restored"], [])
+        self.assertEqual(r["data"]["skipped"][0]["reason"], "the EverQuest folder is gone")
+        shutil.rmtree(self.vault)
+        code, r = self.call()
+        self.assertEqual((code, r["data"]["restored"], r["data"]["skipped"]), (0, [], []))
+
+    def test_skip_drifted_leaves_a_changed_file_even_in_a_normal_apply(self):
+        from tweeq.engine import Swapper, SwapError
+        with open(os.path.join(self.eq, "racedata.txt"), "ab") as f:
+            f.write(b"extra\r\n")
+        sw = Swapper(self.eq, self.vault, None)
+        with self.assertRaises(SwapError):
+            sw.apply()                                                                   # the default still refuses
+        before = self.read("racedata.txt")
+        sw.set_all_enabled(False)
+        sw.apply(skip_drifted=True)
+        self.assertEqual(self.read("racedata.txt"), before)
+        self.assertEqual(self.read("potimeb_chr.txt"), self.orig["potimeb_chr.txt"])
+
+
+class TestProgressWriter(unittest.TestCase):
+    def test_a_locked_progress_file_never_fails_the_command(self):
+        from unittest import mock
+        tmp = tempfile.mkdtemp()
+        try:
+            path = os.path.join(tmp, "p.json")
+            write = cli._progress_writer(path)
+            real = os.replace
+            calls = {"n": 0}
+
+            def flaky(a, b):             # Windows refuses os.replace while the UI has the target open
+                calls["n"] += 1
+                if calls["n"] < 3:
+                    raise PermissionError("in use")
+                return real(a, b)
+            with mock.patch("os.replace", side_effect=flaky):
+                write("stage one", 0.5)                       # retried until it works
+            with open(path) as f:
+                self.assertEqual(json.load(f), {"stage": "stage one", "pct": 0.5})
+            with mock.patch("os.replace", side_effect=PermissionError("locked for good")):
+                write("stage two", 0.9)                       # gives up quietly instead of raising
+            with open(path) as f:
+                self.assertEqual(json.load(f)["stage"], "stage one")
+            self.assertIsNone(cli._progress_writer(None))
+        finally:
+            shutil.rmtree(tmp)

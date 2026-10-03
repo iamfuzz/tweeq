@@ -41,7 +41,7 @@ class TestDiscover(unittest.TestCase):
         fake_install(os.path.join(self.d, "Users/Public/Daybreak Game Company/Installed Games/EverQuest"))
         r = self.find()
         self.assertEqual([x["source"] for x in r], ["standard location"])
-        self.assertTrue(r[0]["path"].endswith("Installed Games/EverQuest"))
+        self.assertTrue(r[0]["path"].endswith(os.path.join("Installed Games", "EverQuest")))
 
     def test_finds_installs_on_drive_root_program_files_and_test_server_copies(self):
         fake_install(os.path.join(self.d, "EverQuest"))
@@ -69,8 +69,13 @@ class TestDiscover(unittest.TestCase):
         self.assertEqual(parse_reg_output(text), ["D:\\Games\\EverQuest\\", "C:\\Games\\EQ2"])
 
     def test_path_conversions(self):
-        self.assertEqual(to_native("C:\\Users\\Public\\Daybreak Game Company"), "/mnt/c/Users/Public/Daybreak Game Company")
-        self.assertEqual(to_native("/mnt/c/x"), "/mnt/c/x")
+        if os.name == "nt":      # natively a Windows path stays as it is, and a WSL-style path becomes a Windows one
+            self.assertEqual(to_native("C:\\Users\\Public\\Daybreak Game Company"), "C:\\Users\\Public\\Daybreak Game Company")
+            self.assertEqual(to_native("/mnt/c/x"), "C:\\x")
+            self.assertEqual(to_native("/mnt/d/Games/Everquest folder"), "D:\\Games\\Everquest folder")
+        else:
+            self.assertEqual(to_native("C:\\Users\\Public\\Daybreak Game Company"), "/mnt/c/Users/Public/Daybreak Game Company")
+            self.assertEqual(to_native("/mnt/c/x"), "/mnt/c/x")
         self.assertEqual(to_display("/mnt/d/Games/EverQuest"), "D:\\Games\\EverQuest")
         self.assertEqual(norm_dir("C:\\Foo\\Bar\\"), norm_dir("/mnt/c/foo/bar"))
 

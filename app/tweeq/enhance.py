@@ -18,7 +18,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 
-TOOLS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tools")
+from .paths import BIN_DIR, NO_WINDOW, TOOLS  # noqa: E402
 if TOOLS not in sys.path:
     sys.path.insert(0, TOOLS)
 
@@ -72,7 +72,7 @@ class Params:
 
 # ----------------------------------------------------------------------------- tool discovery
 def find_quail(extra_dir: str | None = None) -> str:
-    cands = [os.environ.get("TWEEQ_QUAIL")]
+    cands = [os.environ.get("TWEEQ_QUAIL"), os.path.join(BIN_DIR, "quail.exe"), os.path.join(BIN_DIR, "quail")]
     if extra_dir:
         cands += [os.path.join(extra_dir, "quail"), os.path.join(extra_dir, "quail.exe")]
     cands += [shutil.which("quail"), os.path.expanduser("~/go/bin/quail")]
@@ -97,9 +97,10 @@ def upscaler_dir(vault_dir: str) -> str:
 
 
 # ----------------------------------------------------------------------------- archive helpers
-def _run_quail(quail: str, args: list[str]) -> None:
+def _run_quail(quail: str, args: list[str], cwd: str | None = None) -> None:
     try:
-        r = subprocess.run([quail, *args], capture_output=True, text=True, timeout=QUAIL_TIMEOUT)
+        r = subprocess.run([quail, *args], capture_output=True, text=True, timeout=QUAIL_TIMEOUT,
+                           creationflags=NO_WINDOW, cwd=cwd)
     except subprocess.TimeoutExpired:
         raise EnhanceError(f"quail {args[0]} timed out")
     if r.returncode != 0:
@@ -189,7 +190,9 @@ def build_enhanced(base: bytes, params: Params, esrgan_dir: str | None = None, q
         with open(src, "wb") as f:
             f.write(base)
         tell("unpacking", 0.02)
-        _run_quail(quail, ["unzip", src, tree])
+        # quail reads `archive:member` from its archive argument, so a Windows drive path (C:\...) is cut at the colon:
+        # unzip must be given just the file name, from the archive's own folder. (zip and convert take full paths.)
+        _run_quail(quail, ["unzip", os.path.basename(src), tree], cwd=os.path.dirname(src))
         names = sorted(os.listdir(tree))
         mds_files = [n for n in names if n.lower().endswith(".mds")]
         if not mds_files:

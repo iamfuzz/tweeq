@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 from .models import ModelIndex
 from . import enhance as enh
+from .paths import replace_file
 from .racedata import RaceData
 from .zonelist import ZoneList
 
@@ -54,7 +55,7 @@ def _atomic_write(path: str, data: bytes) -> None:
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
-        os.replace(tmp, path)
+        replace_file(tmp, path)
     except BaseException:
         if os.path.exists(tmp):
             os.remove(tmp)
@@ -373,25 +374,36 @@ class Swapper:
         return reps + self._container_status()
 
     def apply(self, accept_drift: bool = False, dry_run: bool = False,
-              progress=None, cancel=None) -> list[FileReport]:
+              progress=None, cancel=None, skip_drifted: bool = False) -> list[FileReport]:
         """Write every managed file so it matches the enabled decisions.
+
+        `skip_drifted` leaves files that something else changed (a patch) completely alone instead of refusing
+        the whole apply; they stay `drifted` in the returned reports. (Used when uninstalling.)
 
         Order matters: anything expensive (enhanced archives) is BUILT first, so a failed or cancelled
         build leaves the install exactly as it was."""
         # 1. re-baseline drifted files (a patch changed them): live becomes the new original
         bases: dict[str, bytes] = {}
+        skipped: set[str] = set()
         for rep in self.status():
             if rep.state == "drifted":
+                if skip_drifted and not accept_drift:
+                    skipped.add(rep.path)
+                    continue
                 if not accept_drift:
                     raise SwapError(f"{rep.path} was changed outside Tweeq (likely a patch); "
                                     "re-run with accept_drift to adopt it as the new original")
                 bases[rep.path] = self._live(rep.path)
         want = self.render({r: b for r, b in bases.items() if is_text_file(r)})
+        for rel in skipped:
+            want.pop(rel, None)
         if dry_run:
             return self.status()
         # 2. build enhanced archives (cached by original-sha + settings)
         esrgan = self._esrgan()
         for rel in self.enhance_files():
+            if rel in skipped:
+                continue
             base = bases.get(rel)
             if base is None:
                 base = self._base(rel)

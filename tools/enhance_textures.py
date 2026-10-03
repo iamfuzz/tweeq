@@ -141,7 +141,8 @@ def _native(p: str) -> str:
     """Path spelling the upscaler binary understands (WSL -> Windows path for a .exe)."""
     if sys.platform == "win32":
         return p
-    r = subprocess.run(["wslpath", "-w", p], capture_output=True, text=True)
+    r = subprocess.run(["wslpath", "-w", p], capture_output=True, text=True,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else p
 
 
@@ -174,7 +175,8 @@ def esrgan_rgb(img: Image.Image, work: str, tag: str, esrgan_dir: str, model: st
     conv = _native if (exe.endswith(".exe") and sys.platform != "win32") else (lambda p: p)
     cmd = [exe, "-i", conv(src), "-o", conv(dst), "-n", model, "-m", conv(os.path.join(esrgan_dir, "models"))]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=ESRGAN_TIMEOUT)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=ESRGAN_TIMEOUT,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired:
         raise TextureError(f"Real-ESRGAN timed out on {tag}")
     if r.returncode != 0 or not os.path.exists(dst):

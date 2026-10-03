@@ -160,6 +160,7 @@ class Textures(unittest.TestCase):
         with self.assertRaises(et.TextureError):
             et.enhance_textures({"c.dds": et.write_dds(gradient(128), "RGBA32", False)}, 256, "esrgan", None)
 
+    @unittest.skipIf(os.name == "nt", "uses a POSIX shell script as the fake upscaler")
     def test_auto_falls_back_with_a_warning_when_the_binary_fails(self):
         d = tempfile.mkdtemp()
         try:
@@ -490,3 +491,21 @@ class UpscalerInstall(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QuailArguments(unittest.TestCase):
+    """quail splits an archive argument at ':' (archive:member), which breaks Windows drive paths (C:\\x.eqg)."""
+
+    def test_unzip_gets_a_bare_file_name_from_the_archives_own_folder(self):
+        from unittest import mock
+        seen = []
+        with mock.patch("tweeq.enhance._run_quail", side_effect=lambda q, args, cwd=None: seen.append((args, cwd))), \
+                mock.patch("tweeq.enhance._load_members", return_value={}), mock.patch("os.listdir", return_value=[]):
+            with self.assertRaises(E.EnhanceError):          # no .mds in the (fake, empty) unpacked tree
+                E.build_enhanced(b"x", E.Params(1, 0), None, "quail")
+        (args, cwd), = seen
+        self.assertEqual(args[0], "unzip")
+        self.assertNotIn(os.sep, args[1])
+        self.assertNotIn(":", args[1])
+        self.assertEqual(args[1], "in.eqg")
+        self.assertTrue(cwd and os.path.isabs(cwd))

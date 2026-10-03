@@ -28,20 +28,23 @@ import json
 import os
 import re
 import sys
+import time
+import traceback
 
-from . import enhance
+from . import __version__, enhance, scan as scanmod
 from .discover import discover, missing_files, to_native
-from .engine import SwapError, Swapper
+from .engine import SwapError, Swapper, norm_dir
 from .compat import CompatDB, check_swap
 from .kinds import DEFAULT_RULES, Kinds
 from .models import ModelIndex
 from .names import build_names, is_listable, load_overrides, load_race_names
+from .paths import DATA_DIR, bundled_quail
+from .uninstall import ClientRunning, restore_all
 from .peq import npc_groups_in_zone, race_summary, zones_for_race
 from .preview import ensure_enhanced_preview, ensure_preview
 from .racedata import RaceData
 
 CONTRACT = 1
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data")
 
 
 def model_names(a, sw, idx) -> tuple[dict[str, str], dict[int, str]]:
@@ -73,6 +76,13 @@ def _decision(d):
             "height": d["height"], "list_archive": d["list_archive"], "notes": d["notes"]}
 
 
+def _no_index(a) -> str:
+    """Say WHICH index was missing: 'no model index' alone is hard to act on."""
+    if not a.index:
+        return "no model index given (--index)"
+    return f"no model index: {a.index!r} does not exist yet (exists={os.path.exists(a.index)}, cwd={os.getcwd()!r})"
+
+
 def _upscaler_info(sw) -> dict:
     d = sw._esrgan()
     return {"installed": bool(d), "path": d, "install_dir": enhance.upscaler_dir(sw.vault),
@@ -93,10 +103,17 @@ def _progress_writer(path):
         return None
 
     def write(stage, pct):
+        """Progress is a courtesy to the UI and must never fail a command. On Windows os.replace is refused while the
+        UI has the file open, so retry briefly and, if it still will not go, just skip this update."""
         tmp = path + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump({"stage": stage, "pct": round(float(pct), 3)}, f)
-        os.replace(tmp, path)
+        for attempt in range(6):
+            try:
+                with open(tmp, "w") as f:
+                    json.dump({"stage": stage, "pct": round(float(pct), 3)}, f)
+                os.replace(tmp, path)
+                return
+            except OSError:
+                time.sleep(0.02 * (attempt + 1))
     return write
 
 
@@ -121,6 +138,7 @@ def build_parser():
     sub.add_parser("adopt")
     sub.add_parser("disable-all")
     p = sub.add_parser("discover"); p.add_argument("--check")
+    p = sub.add_parser("uninstall-restore"); p.add_argument("--data-root", required=True)
     for n in ("info", "status", "plan", "list", "restore"):
         sub.add_parser(n)
     p = sub.add_parser("apply"); p.add_argument("--accept-drift", action="store_true")
@@ -132,6 +150,8 @@ def build_parser():
             p.add_argument("--out", required=True)
         if n == "enhance":
             p.add_argument("--take-over", action="store_true")
+    sub.add_parser("scan-status")
+    p = sub.add_parser("scan"); p.add_argument("--force", action="store_true")
     sub.add_parser("upscaler-status")
     p = sub.add_parser("upscaler-install"); p.add_argument("--from-zip")
     sub.add_parser("upscaler-remove")
@@ -156,10 +176,12 @@ def run(a) -> object:
             miss = missing_files(to_native(a.check))
             return {"path": to_native(a.check), "valid": not miss, "missing": miss}
         return {"candidates": discover()}
+    if a.cmd == "uninstall-restore":             # works from the per-user data folder alone
+        return restore_all(a.data_root)
     if not a.eq or not a.vault:
         raise SwapError("--eq and --vault are required for this command")
     kinds = Kinds(DEFAULT_RULES, os.path.join(a.vault, "model_kinds.json"))
-    idx = ModelIndex(a.index, a.eq, kinds) if a.index else None
+    idx = ModelIndex(a.index, a.eq, kinds) if a.index and os.path.exists(a.index) else None   # absent before the first scan
     sw = Swapper(a.eq, a.vault, idx, esrgan_dir=a.esrgan)
     progress = _progress_writer(a.progress_file)
     cancel = _cancel_checker(a.cancel_file)
@@ -172,7 +194,7 @@ def run(a) -> object:
         raise SwapError("these files differ from your vanilla backups and are not tracked by this app yet: "
                         f"{', '.join(unmanaged)}. Run 'adopt' first, or the app would treat your edits as the originals.")
     if a.cmd == "info":
-        return {"contract": CONTRACT, "eq": a.eq, "unmanaged_edits": unmanaged, "models": len(idx.tags()) if idx else None,
+        return {"contract": CONTRACT, "version": __version__, "eq": a.eq, "unmanaged_edits": unmanaged, "models": len(idx.tags()) if idx else None,
                 "peq": bool(a.peq and os.path.exists(a.peq)), "swaps": len(sw.decisions()),
                 "upscaler": _upscaler_info(sw),
                 "files": _reports(sw.status())}
@@ -202,7 +224,7 @@ def run(a) -> object:
         return out
     if a.cmd == "models":
         if not idx:
-            raise SwapError("no model index given (--index)")
+            raise SwapError(_no_index(a))
         names, _rn = model_names(a, sw, idx)
         f = a.filter.lower()
         out = []
@@ -229,7 +251,7 @@ def run(a) -> object:
         return {"source": "lists", "zones": [], "all": all_zone_lists(a.eq)}
     if a.cmd == "preview":
         if not idx:
-            raise SwapError("no model index given (--index)")
+            raise SwapError(_no_index(a))
         return ensure_preview(a.models or a.eq, idx, a.tag, a.out)
     if a.cmd == "npcs":
         if not a.peq or not os.path.exists(a.peq):
@@ -281,7 +303,7 @@ def run(a) -> object:
         return _reports(sw.apply(accept_drift=a.accept_drift, progress=progress, cancel=cancel))
     if a.cmd in ("enhance-plan", "enhance-preview", "enhance"):
         if not idx:
-            raise SwapError("no model index given (--index)")
+            raise SwapError(_no_index(a))
         params = enhance.Params(a.passes, a.tex_size, a.engine).validate()
         ref = idx.resolve(a.tag)
         if ref.format != "eqg_mds":
@@ -292,6 +314,22 @@ def run(a) -> object:
         if a.cmd == "enhance-plan":
             return enhance.plan(base, params, sw._esrgan())
         return ensure_enhanced_preview(idx, a.tag, a.out, base, params, sw._esrgan(), progress=progress, cancel=cancel)
+    if a.cmd in ("scan-status", "scan"):
+        if not a.index:
+            raise SwapError("--index is required (it names the per-install folder the scan is written to)")
+        out_dir = os.path.dirname(os.path.abspath(a.index))
+        src = a.models or a.eq                     # where the model archives are (same folder as previews read)
+        managed = set(sw.enhance_files()) if norm_dir(src) == norm_dir(a.eq) else set()
+        base = (lambda name: sw.base_path(name) if name in managed else None)   # enhanced archives: scan the vaulted original
+        st = scanmod.status(src, out_dir, base)
+        if a.cmd == "scan-status":
+            return st
+        if st["fresh"] and not a.force:
+            return {**st, "models": st["models"], "seconds": 0.0, "skipped": True}
+        try:
+            return scanmod.run(src, out_dir, base, progress=progress, cancel=cancel)
+        except scanmod.ScanCancelled:
+            raise SwapError("the scan was cancelled; nothing was changed")
     if a.cmd == "upscaler-status":
         return _upscaler_info(sw)
     if a.cmd == "upscaler-install":
@@ -339,18 +377,52 @@ def render_text(cmd: str, data) -> str:
     return json.dumps(data, indent=1)
 
 
+LOG_LIMIT = 1_000_000
+
+
+def _log(text: str) -> None:
+    """Append to the file named by TWEEQ_LOG (the installed app sets it to %APPDATA%\\Tweeq\\logs\\engine.log)."""
+    path = os.environ.get("TWEEQ_LOG")
+    if not path:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if os.path.exists(path) and os.path.getsize(path) > LOG_LIMIT:
+            os.replace(path, path + ".1")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + text.rstrip() + "\n")
+    except OSError:
+        pass
+
+
 def main(argv=None) -> int:
     a = build_parser().parse_args(argv)
+    q = bundled_quail()
+    if q:                                         # child tools (wce_chr_to_gltf...) find the same quail
+        os.environ.setdefault("TWEEQ_QUAIL", q)
     try:
         data = run(a)
     except (SwapError, enhance.EnhanceError, KeyError, ValueError) as e:
         msg = e.args[0] if isinstance(e, KeyError) and e.args else str(e)
+        _log(f"{a.cmd}: {msg}")
+        code = 4 if isinstance(e, ClientRunning) else 2
         if a.json:
             print(json.dumps({"ok": False, "error": str(msg)}))
         else:
             print(f"error: {msg}", file=sys.stderr)
-        return 2
+        return code
+    except Exception as e:                        # a bug: say so plainly, keep the details in the log
+        _log(f"{a.cmd}: INTERNAL ERROR\n{traceback.format_exc()}")
+        msg = f"internal error: {type(e).__name__}: {e} (details are in the engine log)"
+        if a.json:
+            print(json.dumps({"ok": False, "error": msg}))
+        else:
+            print(f"error: {msg}", file=sys.stderr)
+        return 3
     print(json.dumps({"ok": True, "data": data}) if a.json else render_text(a.cmd, data))
+    if a.cmd == "uninstall-restore" and (data["drifted"] or data["errors"]):
+        _log(f"uninstall-restore: left alone {data['drifted']}; errors {data['errors']}")
+        return 3                                    # the installer tells the user some files were not restored
     return 0
 
 

@@ -247,7 +247,7 @@ func _commas(n: int) -> String:
 
 # ------------------------------------------------------------------ actions
 func _io_paths() -> Array:
-	var base := str(Backend.cfg.previews_wsl).get_base_dir()
+	var base := Backend.engine_data_dir()
 	return [base + "/" + PROGRESS_FILE, base + "/" + CANCEL_FILE]
 
 
@@ -259,7 +259,7 @@ func _begin(label: String, cancellable := true) -> void:
 	_bar.visible = true
 	_stage.text = label
 	_stage.visible = true
-	var cancel_local := ProjectSettings.globalize_path("user://" + CANCEL_FILE)
+	var cancel_local := Backend.local_data_dir() + "/" + CANCEL_FILE
 	if FileAccess.file_exists(cancel_local):
 		DirAccess.remove_absolute(cancel_local)
 	_timer.start()
@@ -280,7 +280,7 @@ func _progress_args() -> Array:
 
 
 func _poll_progress() -> void:
-	var f := "user://" + PROGRESS_FILE
+	var f := Backend.local_data_dir() + "/" + PROGRESS_FILE
 	if not FileAccess.file_exists(f):
 		return
 	var parsed = JSON.parse_string(FileAccess.get_file_as_string(f))
@@ -290,7 +290,7 @@ func _poll_progress() -> void:
 
 
 func _on_cancel() -> void:
-	var f := FileAccess.open("user://" + CANCEL_FILE, FileAccess.WRITE)
+	var f := FileAccess.open(Backend.local_data_dir() + "/" + CANCEL_FILE, FileAccess.WRITE)
 	if f:
 		f.store_string("cancel")
 	_stage.text = "cancelling ..."

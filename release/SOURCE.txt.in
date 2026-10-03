@@ -1,0 +1,11 @@
+Tweeq @VERSION@ is free software released under the GNU General Public License, version 3.
+
+Complete corresponding source code for this exact release, including the scripts that build this
+installer, is available at:
+
+    https://github.com/iamfuzz/tweeq/tree/v@VERSION@
+
+If that is ever unavailable, you may request a copy of the source from the project owner
+(https://github.com/iamfuzz) for three years from the date of this release.
+
+Bundled third-party components and their licenses are listed in THIRD_PARTY_LICENSES.md.

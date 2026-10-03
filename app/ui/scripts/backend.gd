@@ -5,6 +5,12 @@ extends Node
 ## A packaged build swaps `exe` / `prefix` for the frozen tweeq.exe; nothing else changes.
 
 const CFG_PATH := "user://config.json"
+const SETTINGS_FILE := "settings.json"   # installed app: only the user's own choices live here
+
+## True when running as the installed app (an exported Tweeq.exe sitting next to its bundled python\). The editor
+## and the WSL development setup are "not packaged" and behave exactly as before.
+var packaged := false
+var _data_root := ""   # installed app: the per-user data folder (%APPDATA%\Tweeq, overridable for tests)
 
 ## Emitted (on the main thread) when a background engine call started with call_cli_async finishes.
 signal cli_done(key: String, result: Dictionary)
@@ -38,8 +44,69 @@ var cfg := {
 
 
 func _ready() -> void:
+	packaged = not OS.has_feature("editor") and FileAccess.file_exists(app_dir() + "/python/python.exe")
+	if packaged:
+		_setup_packaged()
+		return
 	first_run = not FileAccess.file_exists(CFG_PATH)
 	load_config()
+
+
+func app_dir() -> String:
+	return OS.get_executable_path().get_base_dir().replace("\\", "/")
+
+
+## Per-user data folder as Godot sees it (the same folder the engine is told about through engine_data_dir()).
+func local_data_dir() -> String:
+	if packaged and _data_root != "":
+		return _data_root
+	return OS.get_user_data_dir().replace("\\", "/")
+
+
+## The same folder spelled the way the engine process wants it (WSL path in the dev setup, Windows path installed).
+func engine_data_dir() -> String:
+	if packaged:
+		return local_data_dir()
+	return str(cfg.previews_wsl).get_base_dir()
+
+
+func _setup_packaged() -> void:
+	var env_root := OS.get_environment("TWEEQ_DATA_ROOT")           # tests only
+	_data_root = env_root.replace("\\", "/") if env_root != "" else OS.get_user_data_dir().replace("\\", "/")
+	var app := app_dir()
+	cfg.exe = app + "/python/python.exe"
+	cfg.prefix = ["-X", "utf8", "-B", "-m", "tweeq.cli"]
+	cfg.mode = "real"
+	cfg.vanilla = ""
+	cfg.peq = app + "/data/peq_slim.sqlite"
+	cfg.previews = _data_root + "/previews"
+	cfg.previews_wsl = _data_root + "/previews"
+	cfg.real_vault = _data_root + "/vault"
+	cfg.vault = _data_root + "/vault"
+	cfg.eq = ""
+	cfg.models = ""
+	cfg.index = ""
+	for pair in [["TWEEQ_SANDBOX_EQ", "sandbox_eq"], ["TWEEQ_SANDBOX_VAULT", "sandbox_vault"]]:   # tests only
+		if OS.get_environment(pair[0]) != "":
+			cfg[pair[1]] = OS.get_environment(pair[0]).replace("\\", "/")
+	OS.set_environment("TWEEQ_LOG", _data_root + "/logs/engine.log")
+	var sp := _data_root + "/" + SETTINGS_FILE
+	first_run = not FileAccess.file_exists(sp)
+	if not first_run:
+		var parsed = JSON.parse_string(FileAccess.get_file_as_string(sp))
+		if parsed is Dictionary and str(parsed.get("eq", "")) != "":
+			set_install(to_windows_path(str(parsed.eq)))
+
+
+## Point the app at an EverQuest folder: its own vault, and (installed app) its own scan of the model files.
+func set_install(path: String) -> void:
+	var p := path.strip_edges().replace("\\", "/") if packaged else to_engine_path(path)
+	cfg.eq = p
+	cfg.real_eq = p
+	cfg.models = p
+	cfg.vault = vault_for(p)
+	if packaged:
+		cfg.index = "%s/installs/%s/installed_model_index.json" % [local_data_dir(), install_id(p)]
 
 
 func load_config() -> void:
@@ -51,6 +118,12 @@ func load_config() -> void:
 
 
 func save_config() -> void:
+	if packaged:   # only the user's own choice; everything else is derived from where the app is installed
+		DirAccess.make_dir_recursive_absolute(local_data_dir())
+		var fp := FileAccess.open(local_data_dir() + "/" + SETTINGS_FILE, FileAccess.WRITE)
+		if fp:
+			fp.store_string(JSON.stringify({"eq": str(cfg.eq)}, "  "))
+		return
 	var f := FileAccess.open(CFG_PATH, FileAccess.WRITE)
 	f.store_string(JSON.stringify(cfg, "  "))
 
@@ -69,7 +142,22 @@ func to_windows_path(p: String) -> String:
 	p = p.strip_edges()
 	if p.length() > 6 and p.begins_with("/mnt/") and p[6] == "/":
 		return "%s:\\%s" % [p[5].to_upper(), p.substr(7).replace("/", "\\")]
+	if p.length() > 2 and p[1] == ":":   # C:/x -> C:\x
+		return p.replace("/", "\\")
 	return p
+
+
+## Comparable spelling of an install path (matches the engine's norm_dir): /mnt/c/... lower case, no trailing slash.
+func canon_path(p: String) -> String:
+	p = p.strip_edges().replace("\\", "/").rstrip("/")
+	if p.length() >= 3 and p[1] == ":" and p[2] == "/":
+		p = "/mnt/%s/%s" % [p[0].to_lower(), p.substr(3)]
+	return p.to_lower()
+
+
+## Short stable id of an install (same value the dev setup always used for its per-install folders).
+func install_id(path: String) -> String:
+	return canon_path(path).sha1_text().left(8)
 
 
 ## Start EverQuest the way the Dragon launcher does: eqgame.exe patchme, working directory = the install
@@ -140,20 +228,26 @@ func _async_done(key: String, r: Dictionary, t: Thread) -> void:
 	cli_done.emit(key, r)
 
 
-## One vault per install (a vault belongs to the install it was created for). The original install keeps
-## its legacy vault so existing swaps stay attached to it.
-const DEFAULT_REAL_EQ := "/mnt/c/Users/Public/Daybreak Game Company/Installed Games/EverQuest"
+## One vault per install. The vault this machine already has (a manifest whose recorded install is this one) is
+## reused, so existing swaps stay attached; every other install gets its own vault_<id> next to it.
+const DEFAULT_REAL_EQ := "/mnt/c/Users/Public/Daybreak Game Company/Installed Games/EverQuest"   # dev setup only
 
 
 func is_default_install(path: String) -> bool:
-	return to_engine_path(path).to_lower().rstrip("/") == DEFAULT_REAL_EQ.to_lower()
+	return canon_path(path) == DEFAULT_REAL_EQ.to_lower()
 
 
 func vault_for(path: String) -> String:
-	if is_default_install(path):
+	var local := local_data_dir()
+	var engine := engine_data_dir()
+	var legacy_manifest := local + "/vault/manifest.json"
+	if FileAccess.file_exists(legacy_manifest):
+		var m = JSON.parse_string(FileAccess.get_file_as_string(legacy_manifest))
+		if m is Dictionary and canon_path(str(m.get("eq_dir", ""))) == canon_path(path):
+			return engine + "/vault"
+	if not packaged and is_default_install(path):
 		return str(cfg.real_vault)
-	var root := str(cfg.real_vault).get_base_dir()
-	return "%s/vault_%s" % [root, to_engine_path(path).to_lower().sha1_text().left(8)]
+	return "%s/vault_%s" % [engine, install_id(path)]
 
 
 ## Build/cache a preview .glb for a model tag on a worker thread; result arrives via preview_ready.
