@@ -1,4 +1,4 @@
-"""eqswap: reversible model swaps for the EverQuest client.
+"""tweeq: reversible model swaps for the EverQuest client.
 
 A swap is two text edits (proven in-game, 2026-10-01):
   1. racedata.txt  - set the model-tag field of a race/gender row

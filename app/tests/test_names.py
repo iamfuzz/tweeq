@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from contextlib import closing
 
-from eqswap import names
-from eqswap.racedata import RaceData
-from tests.test_eqswap import row, wr_
+from tweeq import names
+from tweeq.racedata import RaceData
+from tests.test_tweeq import row, wr_
 
 LIVE = "/mnt/c/Users/Public/Daybreak Game Company/Installed Games/EverQuest"
 PEQ = os.path.join(os.path.dirname(__file__), "..", "..", "data", "peq_slim.sqlite")

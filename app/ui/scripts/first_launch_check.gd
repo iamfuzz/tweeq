@@ -37,7 +37,7 @@ func _run() -> void:
 	check(str(m.eq_edit.text) == str(backend.cfg.eq), "folder box shows it")
 	check(not m.mode_label.visible, "no mode banner, no warning (nothing untracked)")
 	check(m.swaps.size() == 1 and int(m.swaps[0].race) == 95, "the adopted PoTime Cazic swap is listed (same vault as before)")
-	check(str(backend.cfg.vault).ends_with("/EQSwapper/vault"), "the original install keeps its original vault: " + str(backend.cfg.vault))
+	check(str(backend.cfg.vault).ends_with("/Tweeq/vault"), "the original install keeps its original vault: " + str(backend.cfg.vault))
 	check(m.race_list.item_count > 500 and m.model_list.item_count > 800, "lists populated (%d races, %d models)" % [m.race_list.item_count, m.model_list.item_count])
 	# a different install gets its OWN vault and no vanilla guard
 	check(backend.vault_for("D:\\Games\\EverQuest") != backend.cfg.real_vault and str(backend.vault_for("D:\\Games\\EverQuest")).contains("vault_"), "another install gets its own vault: " + backend.vault_for("D:\\Games\\EverQuest"))

@@ -3,7 +3,7 @@
 Every check is offline and read-only, driven by data/model_compat.json (tools/build_compat_index.py).
 Findings never block a swap except `error` (nothing sensible to apply); warnings explain what
 will look wrong in-game. Evidence: Opus weapon investigation (data/debug_weapon_attach.md) and
-the in-game swap tests of 2026-10-01 (see PLAN_mob_model_manager.md).
+the in-game swap tests of 2026-10-01 (see PLAN_tweeq.md).
 """
 from __future__ import annotations
 

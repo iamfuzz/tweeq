@@ -10,7 +10,7 @@ func _initialize() -> void:
 func _run() -> void:
 	var args := OS.get_cmdline_user_args()
 	var zone: String = args[0] if args.size() > 0 else "gfaydark"
-	var out: String = args[1] if args.size() > 1 else "C:/Users/brian/eq_swapper_ui/shot.png"
+	var out: String = args[1] if args.size() > 1 else "C:/Users/brian/tweeq_ui/shot.png"
 	root.size = Vector2i(1900, 1040)  # roughly what a maximized window is on a 1080p monitor
 	var be = root.get_node("Backend")  # screenshots always use the sandbox
 	be.first_run = false

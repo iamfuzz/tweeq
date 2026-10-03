@@ -1,7 +1,7 @@
-"""eqswap command line. `--json` makes every command print one JSON object, which is the
+"""tweeq command line. `--json` makes every command print one JSON object, which is the
 IPC contract the Godot UI uses:   {"ok": true, "data": ...}  or  {"ok": false, "error": "..."}
 
-    python -m eqswap.cli --eq EQ --vault VAULT [--index IDX] [--peq DB] [--models DIR] [--json] <cmd>
+    python -m tweeq.cli --eq EQ --vault VAULT [--index IDX] [--peq DB] [--models DIR] [--json] <cmd>
 
   info                         counts + file states
   status | plan                per-file state (plan = dry run of apply)
@@ -74,7 +74,7 @@ def all_zone_lists(eq: str) -> list[str]:
 
 
 def build_parser():
-    ap = argparse.ArgumentParser(prog="eqswap")
+    ap = argparse.ArgumentParser(prog="tweeq")
     ap.add_argument("--eq")
     ap.add_argument("--vault")
     ap.add_argument("--index")

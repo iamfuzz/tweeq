@@ -6,12 +6,12 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
-from eqswap import cli
-from eqswap.engine import RACEDATA, Swapper, SwapError, sha
-from eqswap.models import ModelIndex
-from eqswap.racedata import RaceData
-from eqswap.zonelist import ZoneList
-from tests.test_eqswap import (LIVE, VANILLA, REPO_INDEX, make_index, make_install, rd_, wr_)
+from tweeq import cli
+from tweeq.engine import RACEDATA, Swapper, SwapError, sha
+from tweeq.models import ModelIndex
+from tweeq.racedata import RaceData
+from tweeq.zonelist import ZoneList
+from tests.test_tweeq import (LIVE, VANILLA, REPO_INDEX, make_index, make_install, rd_, wr_)
 
 
 class AdoptBase(unittest.TestCase):

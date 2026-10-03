@@ -1,8 +1,8 @@
 extends Node
-## Bridge to the eqswap engine. Every call is one process that prints a single JSON object:
+## Bridge to the tweeq engine. Every call is one process that prints a single JSON object:
 ##   {"ok": true, "data": ...}  or  {"ok": false, "error": "..."}
 ## Dev setup: Godot runs on Windows and the engine in WSL, so the launcher is wsl.exe.
-## A packaged build swaps `exe` / `prefix` for the frozen eq_toolkit.exe; nothing else changes.
+## A packaged build swaps `exe` / `prefix` for the frozen tweeq.exe; nothing else changes.
 
 const CFG_PATH := "user://config.json"
 
@@ -20,12 +20,12 @@ var _threads: Array[Thread] = []
 
 var cfg := {
 	"exe": "wsl.exe",
-	"prefix": ["-d", "Ubuntu", "--cd", "/home/brian/eq/app", "-e", "python3", "-m", "eqswap.cli"],
+	"prefix": ["-d", "Ubuntu", "--cd", "/home/brian/eq/app", "-e", "python3", "-m", "tweeq.cli"],
 	"mode": "real",  # "real" = the user's EverQuest folder, "sandbox" = vanilla test copy
 	"eq": "/mnt/c/Users/Public/Daybreak Game Company/Installed Games/EverQuest",
-	"vault": "/mnt/c/Users/brian/AppData/Roaming/EQSwapper/vault",
+	"vault": "/mnt/c/Users/brian/AppData/Roaming/Tweeq/vault",
 	"real_eq": "/mnt/c/Users/Public/Daybreak Game Company/Installed Games/EverQuest",
-	"real_vault": "/mnt/c/Users/brian/AppData/Roaming/EQSwapper/vault",
+	"real_vault": "/mnt/c/Users/brian/AppData/Roaming/Tweeq/vault",
 	"sandbox_eq": "/home/brian/eq/app/sandbox/EverQuest",
 	"sandbox_vault": "/home/brian/eq/app/sandbox/vault",
 	"vanilla": "/mnt/c/Users/brian/EQ_Launcher/backups/vanilla",
@@ -33,7 +33,7 @@ var cfg := {
 	"peq": "/home/brian/eq/data/peq_slim.sqlite",
 	"models": "/mnt/c/Users/Public/Daybreak Game Company/Installed Games/EverQuest",
 	"previews": "user://previews",
-	"previews_wsl": "/mnt/c/Users/brian/AppData/Roaming/EQSwapper/previews",
+	"previews_wsl": "/mnt/c/Users/brian/AppData/Roaming/Tweeq/previews",
 }
 
 

@@ -6,11 +6,11 @@ import unittest
 from contextlib import closing
 from unittest import mock
 
-from eqswap import preview
-from eqswap.models import ModelIndex
-from eqswap.peq import npc_groups_in_zone
-from eqswap.racedata import RaceData
-from tests.test_eqswap import make_index, make_install, row, wr_
+from tweeq import preview
+from tweeq.models import ModelIndex
+from tweeq.peq import npc_groups_in_zone
+from tweeq.racedata import RaceData
+from tests.test_tweeq import make_index, make_install, row, wr_
 
 LIVE = "/mnt/c/Users/Public/Daybreak Game Company/Installed Games/EverQuest"
 REPO_INDEX = os.path.join(os.path.dirname(__file__), "..", "..", "data", "installed_model_index.json")

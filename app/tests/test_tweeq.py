@@ -4,10 +4,10 @@ import shutil
 import tempfile
 import unittest
 
-from eqswap.engine import RACEDATA, Swapper, SwapError, sha
-from eqswap.models import ModelIndex
-from eqswap.racedata import RaceData
-from eqswap.zonelist import ZoneList
+from tweeq.engine import RACEDATA, Swapper, SwapError, sha
+from tweeq.models import ModelIndex
+from tweeq.racedata import RaceData
+from tweeq.zonelist import ZoneList
 
 LIVE = "/mnt/c/Users/Public/Daybreak Game Company/Installed Games/EverQuest"
 VANILLA = "/mnt/c/Users/brian/EQ_Launcher/backups/vanilla"

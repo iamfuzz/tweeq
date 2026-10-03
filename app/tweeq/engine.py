@@ -44,7 +44,7 @@ def zone_file(zone: str) -> str:
 
 def _atomic_write(path: str, data: bytes) -> None:
     d = os.path.dirname(path)
-    fd, tmp = tempfile.mkstemp(dir=d, prefix=".eqswap-")
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".tweeq-")
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
@@ -271,7 +271,7 @@ class Swapper:
         for rep in self.status():
             if rep.state == "drifted":
                 if not accept_drift:
-                    raise SwapError(f"{rep.path} was changed outside eqswap (likely a patch); "
+                    raise SwapError(f"{rep.path} was changed outside tweeq (likely a patch); "
                                     "re-run with accept_drift to adopt it as the new original")
                 bases[rep.path] = self._live(rep.path)
         want = self.render(bases)

@@ -1,7 +1,7 @@
 """Optional zone discovery from a user-imported PEQ database (data/peq_slim.sqlite).
 
 The PEQ data is GPL and user-supplied; this module only reads it if the user has
-imported it (tools/peq_load.py). Everything else in eqswap works without it."""
+imported it (tools/peq_load.py). Everything else in tweeq works without it."""
 from __future__ import annotations
 
 import sqlite3

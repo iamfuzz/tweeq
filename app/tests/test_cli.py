@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout, redirect_stderr
 
-from eqswap import cli
-from tests.test_eqswap import make_index, make_install
+from tweeq import cli
+from tests.test_tweeq import make_index, make_install
 
 
 class TestCliJson(unittest.TestCase):

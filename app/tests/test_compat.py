@@ -5,9 +5,9 @@ import sqlite3
 import tempfile
 import unittest
 
-from eqswap.compat import CompatDB, check_swap
-from eqswap.racedata import RaceData
-from tests.test_eqswap import row, wr_
+from tweeq.compat import CompatDB, check_swap
+from tweeq.racedata import RaceData
+from tests.test_tweeq import row, wr_
 
 REPO_COMPAT = os.path.join(os.path.dirname(__file__), "..", "..", "data", "model_compat.json")
 

@@ -6,10 +6,10 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
-from eqswap import cli
-from eqswap.discover import discover, is_eq_dir, missing_files, parse_reg_output, to_display, to_native
-from eqswap.engine import Swapper, SwapError, norm_dir
-from tests.test_eqswap import LIVE, make_install, wr_
+from tweeq import cli
+from tweeq.discover import discover, is_eq_dir, missing_files, parse_reg_output, to_display, to_native
+from tweeq.engine import Swapper, SwapError, norm_dir
+from tests.test_tweeq import LIVE, make_install, wr_
 
 
 def fake_install(path):

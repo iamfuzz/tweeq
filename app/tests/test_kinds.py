@@ -7,10 +7,10 @@ import tempfile
 import unittest
 from contextlib import closing, redirect_stderr, redirect_stdout
 
-from eqswap import cli
-from eqswap.kinds import DEFAULT_RULES, Kinds
-from eqswap.models import ModelIndex
-from tests.test_eqswap import make_install, row, wr_
+from tweeq import cli
+from tweeq.kinds import DEFAULT_RULES, Kinds
+from tweeq.models import ModelIndex
+from tests.test_tweeq import make_install, row, wr_
 
 
 class TestKindsRules(unittest.TestCase):

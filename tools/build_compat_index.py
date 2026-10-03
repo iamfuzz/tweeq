@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build data/model_compat.json: per-model facts the swapper's pre-swap checks need.
+"""Build data/model_compat.json: per-model facts Tweeq's pre-swap checks need.
 
 Sources (all offline, from the user's own install):
   data/installed_model_index.json   tools/scan_install.py        which models exist, where
@@ -8,7 +8,7 @@ Sources (all offline, from the user's own install):
   builds/cth_weapfix/track_survey.json      per-clip weapon-track gap vs bind pose (same survey)
   WLD skeletons (this script)    <TAG>R_POINT / <TAG>L_POINT presence
 
-TODO before shipping: fold the two builds/cth_weapfix survey scripts into eq_toolkit so the index
+TODO before shipping: fold the two builds/cth_weapfix survey scripts into tweeq so the index
 can be rebuilt on a buyer's machine; today it is built from the dev install.
 
     python3 tools/build_compat_index.py "$EQ"

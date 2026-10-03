@@ -1,8 +1,8 @@
 extends Control
-## Model Swapper. Pick a ZONE (left) -> its NPC groups -> pane A shows that NPC's model, pane B a
+## Tweeq. Pick a ZONE (left) -> its NPC groups -> pane A shows that NPC's model, pane B a
 ## second character (default: the next different model in the zone; override from the model list).
 ## Then record a swap (race -> model, in chosen zones), see compatibility findings, Apply / Restore.
-## All work goes through Backend (the eqswap engine); this file builds the UI and shuffles JSON.
+## All work goes through Backend (the tweeq engine); this file builds the UI and shuffles JSON.
 
 const HELP_TEXT := """[b]What this app does[/b]
 It changes which 3D model an EverQuest race uses, choosing from any model installed in your client. A swap is two small text edits (the client's race table and a zone's model list); the app never copies or ships game files, and everything it writes can be undone.

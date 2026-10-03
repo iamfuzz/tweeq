@@ -8,7 +8,7 @@ originals are vaulted on first touch and `apply` replays your swaps onto the cur
 > Tweeq contains no game files. It reads and edits the copy of EverQuest you already have installed.
 
 ## Status
-Early. The engine (`app/eqswap`, Python, JSON CLI) and the Godot 4 UI (`app/ui`) work, but some paths in the scripts
+Early. The engine (`app/tweeq`, Python, JSON CLI) and the Godot 4 UI (`app/ui`) work, but some paths in the scripts
 are still hardcoded to the author's machine (WSL + Windows) and there is no packaged release yet.
 
 ## How it works

@@ -1,7 +1,7 @@
 """On-demand model previews: model tag -> cached .glb the Godot viewer can load.
 
 Dev implementation shells out to tools/mds_to_gltf.py (EQG) and tools/wce_chr_to_gltf.py (WLD,
-needs the `quail` binary). A packaged build replaces `TOOLS` with the frozen eq_toolkit.
+needs the `quail` binary). A packaged build replaces `TOOLS` with the frozen tweeq.
 Cache key = tag + source container size/mtime, so a patch that changes the model regenerates it.
 """
 from __future__ import annotations
