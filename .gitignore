@@ -10,3 +10,34 @@ app/sandbox/
 data/*
 !data/model_kinds.json
 !data/peq_slim.sqlite
+
+# Not part of Tweeq: texture/zone upscaler project and its working files
+/zones/
+/viewer/
+/builds/
+/showcase/
+/launcher/
+/tools/research/
+/CLAUDE.md
+/PLAN_*.md
+/MODELS.md
+/export_tweeq.sh
+tools/path_tiles.py
+tools/build_transition_tiles.py
+tools/rebuild_foliage_alpha.py
+tools/upscale_eqg_textures.py
+tools/texture_survey.py
+tools/gen_billboard8.py
+tools/wce_to_obj.py
+tools/caz_upgrade.py
+tools/cth_upgrade.py
+tools/wld_mesh_splice.py
+tools/chr_slot_swap.py
+tools/survey_root_props.py
+tools/anim_survey.py
+tools/*.html
+# Local artifacts: screenshots, archives, quail work dirs, backups
+*.quail/
+*.zip
+*.bak
+shot*.png
